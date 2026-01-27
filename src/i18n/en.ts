@@ -24,6 +24,7 @@ export const en = {
     frames: 'Frames',
     tooLarge: 'Payload exceeds maximum size (100KB)',
     largeWarning: 'Large payload - transmission may take several minutes',
+    widebandHint: 'For HD Voice calls or direct speaker-to-mic',
     // Encryption
     encrypt: 'Encrypt',
     password: 'Password',
@@ -126,6 +127,7 @@ export const en = {
       'Open http://localhost:8000 in your browser',
     ],
     offlineDownloadNote: 'A local web server is required because browsers restrict microphone access for local files.',
+    serverCommands: 'Start a local server (run in the extracted folder):',
     downloadButton: 'Download Offline Package',
     offlineInstructions: 'View Offline Instructions',
   },

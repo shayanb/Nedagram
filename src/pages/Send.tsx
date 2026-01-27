@@ -182,6 +182,9 @@ export function Send() {
               Wideband
             </button>
           </div>
+          {audioMode.value === 'wideband' && (
+            <span class="mode-hint">{t.send.widebandHint}</span>
+          )}
         </div>
 
       </div>

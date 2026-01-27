@@ -130,8 +130,9 @@ export class Decoder {
     this.phaseOffset = Math.floor(this.symbolSamples / NUM_PHASES);
     this.frameCollector = new FrameCollector();
 
-    // Buffer for ~10 seconds of audio
-    this.sampleBuffer = new Float32Array(10 * sampleRate);
+    // Buffer for ~60 seconds of audio (handles longer transmissions)
+    // 60 sec * 48000 Hz = 2.88M samples = ~11.5 MB memory
+    this.sampleBuffer = new Float32Array(60 * sampleRate);
 
     // Initialize chirp detector for robust preamble detection
     this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
@@ -310,8 +311,17 @@ export class Decoder {
   }
 
   private extractSymbolsAllPhases(): void {
-    // For each phase, extract any new complete symbols
-    for (let phase = 0; phase < NUM_PHASES; phase++) {
+    // Calculate the oldest valid sample position (buffer is circular)
+    // We can only reliably read samples that haven't been overwritten
+    const bufferLen = this.sampleBuffer.length;
+    const oldestValidSample = this.totalSamplesReceived > bufferLen
+      ? this.totalSamplesReceived - bufferLen
+      : 0;
+
+    // Once we've found the best phase, only extract for that phase to save computation
+    const phasesToProcess = this.bestPhase >= 0 ? [this.bestPhase] : Array.from({ length: NUM_PHASES }, (_, i) => i);
+
+    for (const phase of phasesToProcess) {
       const offset = phase * this.phaseOffset;
       const symbolsExpected = Math.floor((this.totalSamplesReceived - offset) / this.symbolSamples);
 
@@ -325,6 +335,17 @@ export class Decoder {
 
         // Check if we have enough samples
         if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+        // CRITICAL: Check if the data is still valid (not overwritten by buffer wrap)
+        if (analysisStart < oldestValidSample) {
+          // This symbol's data has been overwritten - we've fallen behind!
+          // This should not happen in normal operation, but if it does,
+          // push a placeholder and log a warning
+          console.warn('[Decoder] Buffer overflow! Symbol', symbolIndex, 'data was overwritten. Behind by',
+            oldestValidSample - analysisStart, 'samples');
+          this.phaseSymbols[phase].push(0); // Placeholder - will likely cause decode failure
+          continue;
+        }
 
         const symbolSamples = this.getBufferSamples(analysisStart, analysisLength);
         const tone = detectSymbolWithThreshold(symbolSamples, this.sampleRate, 0.10);
@@ -835,6 +856,13 @@ export class Decoder {
 
     const framesExpected = this.headerInfo.totalFrames;
     const symbolsAvailable = symbols.length - dataStart;
+
+    // Log progress periodically for long transmissions
+    const framesReceived = this.frameCollector.getReceivedCount();
+    if (framesReceived > 0 && framesReceived % 5 === 0) {
+      const bufferUsage = ((this.totalSamplesReceived % this.sampleBuffer.length) / this.sampleBuffer.length * 100).toFixed(0);
+      console.log(`[Decoder] Progress: ${framesReceived}/${framesExpected} frames, ${symbols.length} symbols, buffer: ${bufferUsage}%`);
+    }
 
     // Calculate symbol offset for each frame
     const frameSymbolOffsets: number[] = [0];

@@ -26,6 +26,7 @@ export const fa: Translations = {
     frames: 'فریم',
     tooLarge: 'حجم داده بیش از حد مجاز است (۱۰۰ کیلوبایت)',
     largeWarning: 'داده حجیم - انتقال ممکن است چند دقیقه طول بکشد',
+    widebandHint: 'برای تماس HD Voice یا مستقیم بلندگو به میکروفون',
     // Encryption
     encrypt: 'رمزگذاری',
     password: 'رمز عبور',
@@ -128,6 +129,7 @@ export const fa: Translations = {
       'http://localhost:8000 را در مرورگر باز کنید',
     ],
     offlineDownloadNote: 'سرور وب محلی لازم است چون مرورگرها دسترسی میکروفون را برای فایل‌های محلی محدود می‌کنند.',
+    serverCommands: 'سرور محلی را اجرا کنید (در پوشه استخراج‌شده):',
     downloadButton: 'دانلود بسته آفلاین',
     offlineInstructions: 'مشاهده دستورات آفلاین',
   },

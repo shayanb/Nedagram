@@ -177,6 +177,72 @@
   border-color: var(--color-text-muted);
 }
 
+/* Server Commands */
+.server-commands {
+  margin: var(--space-md) 0;
+}
+
+.commands-title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  margin-bottom: var(--space-sm);
+}
+
+.command-block {
+  margin-bottom: var(--space-sm);
+}
+
+.command-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.command-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.command-text {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.copy-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.copy-btn.copied {
+  color: var(--color-success);
+}
+
 /* RTL adjustments */
 [dir="rtl"] .help-list {
   padding-left: 0;
