@@ -93,14 +93,14 @@ function unhookConsole() {
   console.error = originalConsole.error;
 }
 
-// Enable/disable logging
+// Enable/disable logging (logs are preserved until explicitly cleared)
 export function enableDebugLog(enabled: boolean) {
   isEnabled.value = enabled;
   if (enabled) {
     hookConsole();
   } else {
     unhookConsole();
-    logs.value = [];
+    // Don't clear logs - user can review them even after stopping
   }
 }
 
@@ -130,12 +130,8 @@ export function DebugLog() {
       enableDebugLog(true);
       isExpanded.value = true;
     } else {
-      // If enabled, toggle expanded state
+      // If enabled, just toggle expanded state (keep logging in background)
       isExpanded.value = !isExpanded.value;
-      // If collapsing and was expanded, disable logging
-      if (!isExpanded.value) {
-        enableDebugLog(false);
-      }
     }
     // Clear fading state when expanding
     if (isExpanded.value) {
@@ -147,6 +143,11 @@ export function DebugLog() {
     clearDebugLogs();
   }, []);
 
+  const handleStop = useCallback(() => {
+    enableDebugLog(false);
+    isExpanded.value = false;
+  }, []);
+
   const visibleLogs = isExpanded.value ? logs.value : logs.value.slice(-5);
 
   return (
@@ -155,7 +156,7 @@ export function DebugLog() {
       <button
         class={`debug-toggle ${isEnabled.value ? 'active' : ''}`}
         onClick={handleToggle}
-        title={isEnabled.value ? (isExpanded.value ? 'Disable logs' : 'Expand logs') : 'Enable debug logs'}
+        title={isEnabled.value ? (isExpanded.value ? 'Collapse logs' : 'Expand logs') : 'Enable debug logs'}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -204,11 +205,18 @@ export function DebugLog() {
         </div>
       )}
 
-      {/* Clear button (only when expanded) */}
-      {isEnabled.value && isExpanded.value && logs.value.length > 0 && (
-        <button class="debug-clear" onClick={handleClear}>
-          Clear
-        </button>
+      {/* Action buttons (only when expanded) */}
+      {isEnabled.value && isExpanded.value && (
+        <div class="debug-actions">
+          {logs.value.length > 0 && (
+            <button class="debug-clear" onClick={handleClear}>
+              Clear
+            </button>
+          )}
+          <button class="debug-stop" onClick={handleStop}>
+            Stop
+          </button>
+        </div>
       )}
     </div>
   );

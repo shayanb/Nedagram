@@ -125,10 +125,15 @@
   padding: var(--space-sm);
 }
 
-.debug-clear {
-  display: block;
-  width: 100%;
+.debug-actions {
+  display: flex;
+  gap: var(--space-xs);
   margin-top: var(--space-xs);
+}
+
+.debug-clear,
+.debug-stop {
+  flex: 1;
   padding: 4px;
   background: transparent;
   border: 1px solid var(--color-border);
@@ -142,6 +147,11 @@
 .debug-clear:hover {
   border-color: var(--color-error);
   color: var(--color-error);
+}
+
+.debug-stop:hover {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
 }
 
 /* RTL adjustments */
