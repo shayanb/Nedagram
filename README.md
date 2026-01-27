@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/icons/logo.png" alt="Nedagram Logo" width="200" />
+  <img src="public/icons/logo.png" alt="Nedagram Logo" width="250" />
 </p>
 
 # Nedagram
@@ -21,8 +21,8 @@ Nedagram was built to help share text data when sending files or copy-paste isn'
 
 ```
 ┌─────────────┐    Audio     ┌─────────────┐
-│   SENDER    │   Waves     │  RECEIVER   │
-│             │ ~~~~~~~~>    │             │
+│   SENDER    │    Waves     │  RECEIVER   │
+│             │  ~~~~~~~~>   │             │
 │  Text Input │  Speaker     │ Microphone  │
 │      ↓      │     to       │      ↓      │
 │  Encrypt*   │    Mic       │   Decode    │

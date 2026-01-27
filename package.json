@@ -1,10 +1,10 @@
 {
   "name": "nedagram",
-  "version": "2.5.1",
+  "version": "2.5.3",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc && vite build && cd dist && rm -f nedagram-offline*.zip && zip -r nedagram-offline-$(node -p \"require('../package.json').version\").zip . -x '*.map' -x 'nedagram-offline*.zip' && cp nedagram-offline-$(node -p \"require('../package.json').version\").zip nedagram-offline.zip",
+    "build": "tsc && vite build && cd dist && rm -f nedagram-offline*.zip && zip -r nedagram-offline-$(node -p \"require('../package.json').version\").zip . -x '*.map' -x 'nedagram-offline*.zip' -x 'icons/og-image.jpg' -x 'icons/logo.png' -x 'icons/icon-192.png' -x 'icons/icon-512.png' -x 'CNAME' -x 'manifest.json' && cp nedagram-offline-$(node -p \"require('../package.json').version\").zip nedagram-offline.zip",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"

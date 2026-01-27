@@ -42,6 +42,27 @@
   border-radius: var(--radius-sm);
 }
 
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.theme-toggle:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
 .lang-toggle {
   font-size: var(--font-size-sm);
   font-weight: 500;

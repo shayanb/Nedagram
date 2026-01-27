@@ -48,9 +48,9 @@
   --transition-normal: 250ms ease;
 }
 
-/* Dark mode preparation */
+/* Dark mode - system preference (when no manual override) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --color-bg: #1A1A1A;
     --color-surface: #2D2D2D;
     --color-text: #F0F0F0;
@@ -59,6 +59,17 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
   }
+}
+
+/* Dark mode - manual override */
+:root[data-theme="dark"] {
+  --color-bg: #1A1A1A;
+  --color-surface: #2D2D2D;
+  --color-text: #F0F0F0;
+  --color-text-muted: #A0A0A0;
+  --color-border: #404040;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
 }
 
 * {
