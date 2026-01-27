@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test:run
+
+      - name: Build
+        run: npm run build
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Nedagram v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Nedagram v${{ steps.version.outputs.VERSION }}
+
+            ### Offline Package
+            Download `nedagram-offline.zip` below to use Nedagram without internet access.
+
+            **Usage:**
+            1. Extract the ZIP file
+            2. Start a local web server: `python3 -m http.server 8000 --bind 127.0.0.1`
+            3. Open http://127.0.0.1:8000 in your browser
+
+            See [README](https://github.com/${{ github.repository }}#offline-distribution) for more details.
+          files: |
+            dist/nedagram-offline-${{ steps.version.outputs.VERSION }}.zip
+          draft: false
+          prerelease: false
