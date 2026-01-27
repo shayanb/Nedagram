@@ -1,5 +1,35 @@
-node_modules
-idea.md
-/dist
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
 .DS_Store
-.claude/settings.local.json
+Thumbs.db
+
+# Local config
+.env
+.env.local
+.env.*.local
+*.local
+
+# Claude Code
+.claude/
+
+# Development notes (not for public)
+idea.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/

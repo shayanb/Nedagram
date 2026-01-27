@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/icons/logo.png" alt="Nedagram Logo" width="200" />
+</p>
+
 # نداگرام
 
 [English](README.md) | فارسی
