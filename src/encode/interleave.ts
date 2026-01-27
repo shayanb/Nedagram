@@ -7,43 +7,60 @@
  */
 
 /**
- * Interleave bytes using a block interleaver
+ * Interleave bytes using a block interleaver (size-preserving)
+ *
+ * Conceptually fills a matrix row-by-row and reads column-by-column.
+ * Handles incomplete matrices correctly to preserve original data size.
+ *
  * @param data Input bytes
- * @param rows Number of rows in the interleaver matrix
- * @returns Interleaved bytes
+ * @param rows Desired interleaver depth (number of rows)
+ * @returns Interleaved bytes (same size as input)
  */
 export function interleave(data: Uint8Array, rows: number): Uint8Array {
-  const cols = Math.ceil(data.length / rows);
-  const result = new Uint8Array(rows * cols);
+  const len = data.length;
+  if (len === 0 || rows <= 1) return new Uint8Array(data);
 
-  // Fill matrix row by row, read column by column
-  for (let i = 0; i < data.length; i++) {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
-    const newIndex = col * rows + row;
-    result[newIndex] = data[i];
+  const cols = Math.ceil(len / rows);
+  const result = new Uint8Array(len);
+
+  // Read column by column from the conceptual matrix
+  // Element at original position i is at row=floor(i/cols), col=i%cols
+  // Column c contains elements at positions: c, c+cols, c+2*cols, ...
+  // Number of elements in column c = ceil((len - c) / cols)
+  let writeIdx = 0;
+  for (let col = 0; col < cols; col++) {
+    const numInCol = Math.ceil((len - col) / cols);
+    for (let row = 0; row < numInCol; row++) {
+      const readIdx = row * cols + col;
+      result[writeIdx++] = data[readIdx];
+    }
   }
 
   return result;
 }
 
 /**
- * De-interleave bytes (reverse of interleave)
+ * De-interleave bytes (reverse of interleave, size-preserving)
  * @param data Interleaved bytes
  * @param rows Number of rows used in interleaving
- * @param originalLength Original data length (before padding)
+ * @param originalLength Original data length (should equal data.length)
  * @returns De-interleaved bytes
  */
 export function deinterleave(data: Uint8Array, rows: number, originalLength: number): Uint8Array {
-  const cols = Math.ceil(data.length / rows);
-  const result = new Uint8Array(originalLength);
+  const len = originalLength;
+  if (len === 0 || rows <= 1) return new Uint8Array(data.subarray(0, len));
 
-  // Read column by column, fill row by row
-  for (let i = 0; i < originalLength; i++) {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
-    const srcIndex = col * rows + row;
-    result[i] = data[srcIndex];
+  const cols = Math.ceil(len / rows);
+  const result = new Uint8Array(len);
+
+  // Reverse: read in the same column-by-column order, write to original positions
+  let readIdx = 0;
+  for (let col = 0; col < cols; col++) {
+    const numInCol = Math.ceil((len - col) / cols);
+    for (let row = 0; row < numInCol; row++) {
+      const writeIdx = row * cols + col;
+      result[writeIdx] = data[readIdx++];
+    }
   }
 
   return result;
