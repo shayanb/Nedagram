@@ -13,6 +13,7 @@ import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
 import { decodeDataFEC, autoDetectAndDecodeHeader, autoDetectAndDecodeHeaderWithRedundancy, getHeaderSizes } from './fec';
 import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } from './deframe';
 import { processPayload, type ProcessResult } from './decompress';
+import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
 import { sha256Hex } from '../lib/sha256';
 
 export type DecodeState =
@@ -554,8 +555,20 @@ export class Decoder {
     console.log('[Decoder] Header symbols (first 20):', symbolsNormal.slice(0, 20));
 
     // Convert to bytes for both sizes
-    const bytesNormal = this.symbolsToBytes(symbolsNormal, headerSizes.normal);
-    const bytesRobust = this.symbolsToBytes(symbolsRobust, headerSizes.robust);
+    const bytesNormalRaw = this.symbolsToBytes(symbolsNormal, headerSizes.normal);
+    const bytesRobustRaw = this.symbolsToBytes(symbolsRobust, headerSizes.robust);
+
+    // Deinterleave bytes (reverse of encoder interleaving)
+    const bytesNormal = deinterleave(
+      bytesNormalRaw,
+      calculateInterleaverDepth(headerSizes.normal),
+      headerSizes.normal
+    );
+    const bytesRobust = deinterleave(
+      bytesRobustRaw,
+      calculateInterleaverDepth(headerSizes.robust),
+      headerSizes.robust
+    );
 
     console.log('[Decoder] Header bytes normal (first 10):', Array.from(bytesNormal.slice(0, 10)));
     console.log('[Decoder] Expected: [78, 49, ...] = "N1" magic');
@@ -579,8 +592,19 @@ export class Decoder {
           const symbols2Start = headerStart + headerSymbols;
           const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
           const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-          const bytes2Normal = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-          const bytes2Robust = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
+          const bytes2NormalRaw = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
+          const bytes2RobustRaw = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
+          // Deinterleave second copy
+          const bytes2Normal = deinterleave(
+            bytes2NormalRaw,
+            calculateInterleaverDepth(headerSizes.normal),
+            headerSizes.normal
+          );
+          const bytes2Robust = deinterleave(
+            bytes2RobustRaw,
+            calculateInterleaverDepth(headerSizes.robust),
+            headerSizes.robust
+          );
 
           const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
             bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
@@ -618,8 +642,19 @@ export class Decoder {
         const symbols2Start = headerStart + headerSymbolsMax;
         const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
         const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-        const bytes2Normal = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-        const bytes2Robust = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
+        const bytes2NormalRaw = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
+        const bytes2RobustRaw = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
+        // Deinterleave second copy
+        const bytes2Normal = deinterleave(
+          bytes2NormalRaw,
+          calculateInterleaverDepth(headerSizes.normal),
+          headerSizes.normal
+        );
+        const bytes2Robust = deinterleave(
+          bytes2RobustRaw,
+          calculateInterleaverDepth(headerSizes.robust),
+          headerSizes.robust
+        );
 
         const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
           bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
@@ -746,7 +781,14 @@ export class Decoder {
       this.framesAttempted.add(f);
 
       const frameSymbolsArr = symbols.slice(frameStart, frameEnd);
-      const frameBytes = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+      const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+
+      // Deinterleave frame bytes (reverse of encoder interleaving)
+      const frameBytes = deinterleave(
+        frameBytesRaw,
+        calculateInterleaverDepth(thisFrameEncodedBytes),
+        thisFrameEncodedBytes
+      );
 
       console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
       console.log('[Decoder] Expected: [68, ...] = "D" magic');

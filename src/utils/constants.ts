@@ -2,14 +2,15 @@
 export type AudioMode = 'phone' | 'wideband';
 
 // Phone-compatible mode: fits within 300-3400 Hz phone bandwidth
+// Optimized for GSM/AMR codecs with wider tone spacing for robustness
 export const PHONE_MODE = {
   SAMPLE_RATE: 48000,
   FALLBACK_SAMPLE_RATE: 44100,
   SYMBOL_DURATION_MS: 50,
-  GUARD_INTERVAL_MS: 8,
+  GUARD_INTERVAL_MS: 12,      // Increased from 8ms for better codec frame boundary tolerance
   NUM_TONES: 8,
   BASE_FREQUENCY: 600,
-  TONE_SPACING: 350,
+  TONE_SPACING: 400,          // Increased from 350 Hz for better frequency discrimination (max freq: 3400 Hz)
   FREQUENCY_JITTER: 15,
   WARMUP_DURATION_MS: 200,       // Steady tone before chirp
   CHIRP_DURATION_MS: 800,        // Longer chirp for AGC settling
