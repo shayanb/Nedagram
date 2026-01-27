@@ -5,7 +5,7 @@
  * The correlation peak indicates when the chirp occurred, even in noisy conditions.
  */
 
-import { AUDIO } from '../utils/constants';
+import { AUDIO, PHONE_MODE, WIDEBAND_MODE, type AudioMode } from '../utils/constants';
 
 /**
  * Generate a chirp signal template for matched filtering
@@ -32,19 +32,24 @@ export function generateChirpTemplate(
 
 /**
  * Generate the up-down chirp template used in preamble
+ * If mode is specified, uses that mode's frequencies; otherwise uses current AUDIO settings
  */
-export function generatePreambleChirpTemplate(sampleRate: number): Float32Array {
+export function generatePreambleChirpTemplate(sampleRate: number, mode?: AudioMode): Float32Array {
+  const settings = mode
+    ? (mode === 'phone' ? PHONE_MODE : WIDEBAND_MODE)
+    : AUDIO;
+
   const upChirp = generateChirpTemplate(
-    AUDIO.CHIRP_START_HZ,
-    AUDIO.CHIRP_PEAK_HZ,
-    AUDIO.CHIRP_DURATION_MS / 2,
+    settings.CHIRP_START_HZ,
+    settings.CHIRP_PEAK_HZ,
+    settings.CHIRP_DURATION_MS / 2,
     sampleRate
   );
 
   const downChirp = generateChirpTemplate(
-    AUDIO.CHIRP_PEAK_HZ,
-    AUDIO.CHIRP_START_HZ,
-    AUDIO.CHIRP_DURATION_MS / 2,
+    settings.CHIRP_PEAK_HZ,
+    settings.CHIRP_START_HZ,
+    settings.CHIRP_DURATION_MS / 2,
     sampleRate
   );
 
@@ -160,36 +165,43 @@ export function detectChirpSync(
 /**
  * Incremental chirp detector for streaming audio
  * Maintains a buffer and detects chirp as audio comes in
+ * Now detects which mode (phone/wideband) the chirp belongs to
  */
 export class ChirpDetector {
   private sampleRate: number;
-  private template: Float32Array;
+  private phoneTemplate: Float32Array;
+  private widebandTemplate: Float32Array;
   private buffer: Float32Array;
   private bufferWritePos: number = 0;
   private bufferFilled: boolean = false;
   private detected: boolean = false;
   private chirpEndSample: number = -1;
   private confidence: number = 0;
+  private detectedMode: AudioMode | null = null;
   private threshold: number;
   private lastCheckPos: number = 0;
 
   constructor(sampleRate: number, threshold: number = 0.35) {
     this.sampleRate = sampleRate;
     this.threshold = threshold;
-    this.template = generatePreambleChirpTemplate(sampleRate);
 
-    // Buffer needs to hold at least 2x template length for detection
-    const bufferSize = this.template.length * 3;
+    // Generate templates for both modes
+    this.phoneTemplate = generatePreambleChirpTemplate(sampleRate, 'phone');
+    this.widebandTemplate = generatePreambleChirpTemplate(sampleRate, 'wideband');
+
+    // Buffer needs to hold at least 2x larger template length for detection
+    const maxTemplateLen = Math.max(this.phoneTemplate.length, this.widebandTemplate.length);
+    const bufferSize = maxTemplateLen * 3;
     this.buffer = new Float32Array(bufferSize);
   }
 
   /**
    * Add samples to the detector
-   * Returns detection result
+   * Returns detection result including which mode was detected
    */
-  addSamples(samples: Float32Array): { detected: boolean; chirpEndSample: number; confidence: number } {
+  addSamples(samples: Float32Array): { detected: boolean; chirpEndSample: number; confidence: number; mode: AudioMode | null } {
     if (this.detected) {
-      return { detected: true, chirpEndSample: this.chirpEndSample, confidence: this.confidence };
+      return { detected: true, chirpEndSample: this.chirpEndSample, confidence: this.confidence, mode: this.detectedMode };
     }
 
     // Add samples to circular buffer
@@ -201,38 +213,58 @@ export class ChirpDetector {
 
     // Need at least template length to detect
     const availableSamples = this.bufferFilled ? this.buffer.length : this.bufferWritePos;
-    if (availableSamples < this.template.length * 1.5) {
-      return { detected: false, chirpEndSample: -1, confidence: 0 };
+    const minRequired = Math.max(this.phoneTemplate.length, this.widebandTemplate.length) * 1.5;
+    if (availableSamples < minRequired) {
+      return { detected: false, chirpEndSample: -1, confidence: 0, mode: null };
     }
 
     // Linearize buffer for correlation
     const linearBuffer = this.getLinearBuffer();
-
-    // Check for chirp using coarse search first
     const stepSize = Math.floor(this.sampleRate / 50); // 20ms steps for speed
-    const { peakIndex, peakValue } = correlateWithTemplate(linearBuffer, this.template, stepSize);
 
-    if (peakValue >= this.threshold) {
+    // Try both templates and use the one with better correlation
+    const phoneResult = correlateWithTemplate(linearBuffer, this.phoneTemplate, stepSize);
+    const widebandResult = correlateWithTemplate(linearBuffer, this.widebandTemplate, stepSize);
+
+    // Determine which mode matches better
+    let bestMode: AudioMode;
+    let bestTemplate: Float32Array;
+    let bestResult: { peakIndex: number; peakValue: number };
+
+    if (phoneResult.peakValue >= widebandResult.peakValue) {
+      bestMode = 'phone';
+      bestTemplate = this.phoneTemplate;
+      bestResult = phoneResult;
+    } else {
+      bestMode = 'wideband';
+      bestTemplate = this.widebandTemplate;
+      bestResult = widebandResult;
+    }
+
+    if (bestResult.peakValue >= this.threshold) {
       // Refine detection
-      const refineStart = Math.max(0, peakIndex - stepSize);
-      const refineEnd = Math.min(linearBuffer.length, peakIndex + stepSize + this.template.length);
+      const refineStart = Math.max(0, bestResult.peakIndex - stepSize);
+      const refineEnd = Math.min(linearBuffer.length, bestResult.peakIndex + stepSize + bestTemplate.length);
 
       if (refineEnd <= linearBuffer.length) {
         const refineSignal = linearBuffer.subarray(refineStart, refineEnd);
-        const refined = correlateWithTemplate(refineSignal, this.template, 1);
+        const refined = correlateWithTemplate(refineSignal, bestTemplate, 1);
 
         this.detected = true;
-        this.chirpEndSample = refineStart + refined.peakIndex + this.template.length;
+        this.chirpEndSample = refineStart + refined.peakIndex + bestTemplate.length;
         this.confidence = refined.peakValue;
+        this.detectedMode = bestMode;
 
-        console.log('[ChirpDetector] Chirp detected! Confidence:', this.confidence.toFixed(3),
-                    'End sample:', this.chirpEndSample);
+        console.log('[ChirpDetector] Chirp detected! Mode:', bestMode,
+                    'Confidence:', this.confidence.toFixed(3),
+                    'Phone:', phoneResult.peakValue.toFixed(3),
+                    'Wideband:', widebandResult.peakValue.toFixed(3));
 
-        return { detected: true, chirpEndSample: this.chirpEndSample, confidence: this.confidence };
+        return { detected: true, chirpEndSample: this.chirpEndSample, confidence: this.confidence, mode: bestMode };
       }
     }
 
-    return { detected: false, chirpEndSample: -1, confidence: peakValue };
+    return { detected: false, chirpEndSample: -1, confidence: Math.max(phoneResult.peakValue, widebandResult.peakValue), mode: null };
   }
 
   /**
@@ -260,6 +292,7 @@ export class ChirpDetector {
     this.detected = false;
     this.chirpEndSample = -1;
     this.confidence = 0;
+    this.detectedMode = null;
     this.lastCheckPos = 0;
     this.buffer.fill(0);
   }
@@ -283,5 +316,12 @@ export class ChirpDetector {
    */
   getConfidence(): number {
     return this.confidence;
+  }
+
+  /**
+   * Get the detected audio mode (phone or wideband)
+   */
+  getDetectedMode(): AudioMode | null {
+    return this.detectedMode;
   }
 }

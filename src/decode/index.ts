@@ -8,7 +8,7 @@
  * precise timing is used to align symbol extraction.
  */
 import { signal } from '@preact/signals';
-import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, type AudioMode } from '../utils/constants';
+import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, getAudioMode, type AudioMode } from '../utils/constants';
 import { bytesToString } from '../utils/helpers';
 import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
 import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize } from './fec';
@@ -100,6 +100,8 @@ export class Decoder {
 
   // Audio mode auto-detection
   private detectedAudioMode: AudioMode | null = null;
+  private symbolExtractionMode: AudioMode | null = null; // Track which mode symbols were extracted with
+  private lastExtractedSamplePos = 0; // Track extraction position for re-extraction
 
   // Encryption
   private password: string | null = null;
@@ -283,8 +285,18 @@ export class Decoder {
       if (chirpResult.detected) {
         this.chirpDetected = true;
         this.chirpEndSample = chirpResult.chirpEndSample;
-        console.log('[Decoder] Chirp detected via matched filter! Confidence:', chirpResult.confidence.toFixed(3));
-        this.lastDebugInfo = `Chirp detected (${(chirpResult.confidence * 100).toFixed(0)}% confidence)`;
+
+        // Set mode from chirp detection BEFORE symbol extraction continues
+        // This ensures symbols get extracted with correct timing for the detected mode
+        if (chirpResult.mode) {
+          console.log('[Decoder] Chirp detected mode:', chirpResult.mode, 'Confidence:', chirpResult.confidence.toFixed(3));
+          this.detectedAudioMode = chirpResult.mode;
+          setAudioMode(chirpResult.mode);
+          this.updateSymbolTiming(); // This clears wrongly-extracted symbols if mode changed
+        } else {
+          console.log('[Decoder] Chirp detected via matched filter! Confidence:', chirpResult.confidence.toFixed(3));
+        }
+        this.lastDebugInfo = `Chirp detected (${chirpResult.mode || 'unknown'}, ${(chirpResult.confidence * 100).toFixed(0)}% confidence)`;
       } else if (chirpResult.confidence > 0.15) {
         this.lastDebugInfo = `Searching for chirp... (${(chirpResult.confidence * 100).toFixed(0)}% match)`;
       }
@@ -311,6 +323,11 @@ export class Decoder {
   }
 
   private extractSymbolsAllPhases(): void {
+    // Track which mode we're extracting symbols for
+    if (!this.symbolExtractionMode) {
+      this.symbolExtractionMode = getAudioMode();
+    }
+
     // Calculate the oldest valid sample position (buffer is circular)
     // We can only reliably read samples that haven't been overwritten
     const bufferLen = this.sampleBuffer.length;
@@ -591,12 +608,42 @@ export class Decoder {
 
   /**
    * Update symbol timing after mode detection
+   * If mode changed from what symbols were extracted with, clear and re-extract
    */
   private updateSymbolTiming(): void {
+    const oldMode = this.symbolExtractionMode;
+    const newMode = this.detectedAudioMode;
+
     this.symbolSamples = Math.floor((AUDIO.SYMBOL_DURATION_MS / 1000) * this.sampleRate);
     this.guardSamples = Math.floor((AUDIO.GUARD_INTERVAL_MS / 1000) * this.sampleRate);
     this.phaseOffset = Math.floor(this.symbolSamples / NUM_PHASES);
-    console.log('[Decoder] Updated timing for', this.detectedAudioMode, '- symbol:', this.symbolSamples, 'samples');
+
+    console.log('[Decoder] Updated timing for', newMode, '- symbol:', this.symbolSamples, 'samples');
+
+    // If mode changed, we need to re-extract symbols with new timing
+    if (oldMode && oldMode !== newMode) {
+      console.log('[Decoder] Mode changed from', oldMode, 'to', newMode, '- re-extracting symbols');
+      this.clearSymbolsForReextraction();
+    }
+
+    this.symbolExtractionMode = newMode;
+  }
+
+  /**
+   * Clear symbols and reset for re-extraction with new timing
+   */
+  private clearSymbolsForReextraction(): void {
+    // Clear all phase symbol arrays
+    for (let p = 0; p < NUM_PHASES; p++) {
+      this.phaseSymbols[p] = [];
+    }
+    // Reset detection state
+    this.bestPhase = -1;
+    this.syncFoundAt = -1;
+    this.state = 'detecting_preamble';
+    // Reset extraction mode so next extraction uses current timing
+    this.symbolExtractionMode = null;
+    // Keep chirp detection state as the chirp position is still valid
   }
 
   /**

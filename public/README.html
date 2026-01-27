@@ -22,12 +22,6 @@
       border-radius: 4px;
       font-family: ui-monospace, monospace;
     }
-    pre {
-      background: #f4f4f4;
-      padding: 1rem;
-      border-radius: 8px;
-      overflow-x: auto;
-    }
     .warning {
       background: #fff3cd;
       border: 1px solid #ffc107;
@@ -50,6 +44,81 @@
       direction: rtl;
       text-align: right;
     }
+    /* Command block styles */
+    .command-block {
+      position: relative;
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      margin: 0.75rem 0;
+      overflow: hidden;
+    }
+    .command-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background: #eee;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 0.85rem;
+      color: #666;
+    }
+    .command-label {
+      font-weight: 500;
+    }
+    .copy-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.5rem;
+      background: transparent;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .copy-btn:hover {
+      background: #9D7E8A;
+      border-color: #9D7E8A;
+      color: white;
+    }
+    .copy-btn.copied {
+      background: #4A9E6B;
+      border-color: #4A9E6B;
+      color: white;
+    }
+    .command-code {
+      display: block;
+      padding: 0.75rem 1rem;
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #333;
+      background: transparent;
+    }
+    .command-note {
+      padding: 0.5rem 0.75rem;
+      background: #fff;
+      border-top: 1px solid #e0e0e0;
+      font-size: 0.8rem;
+      color: #777;
+    }
+    /* RTL adjustments for command blocks */
+    .rtl .command-header {
+      direction: ltr;
+    }
+    .rtl .command-code {
+      direction: ltr;
+      text-align: left;
+    }
+    .rtl .command-note {
+      direction: rtl;
+      text-align: right;
+    }
   </style>
 </head>
 <body>
@@ -69,23 +138,62 @@
     <h2>Quick Start</h2>
 
     <h3>Option 1: Using Python (Easiest)</h3>
-    <p>Open a terminal/command prompt <b>in Nedagram folder </b> and run:</p>
-    <pre>
-python3 -m http.server 8000 --bind 127.0.0.1
+    <p>Open a terminal/command prompt <b>in this folder</b> and run one of these commands:</p>
 
-# Or for network access (share with other devices)
-python3 -m http.server 8000 --bind 0.0.0.0
-</pre>
-On Windows, use 'python' instead of 'python3'
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Python (local only)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'python3 -m http.server 8000 --bind 127.0.0.1')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">python3 -m http.server 8000 --bind 127.0.0.1</code>
+      <div class="command-note">On Windows, use <code>python</code> instead of <code>python3</code></div>
+    </div>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Python (network access)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'python3 -m http.server 8000 --bind 0.0.0.0')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">python3 -m http.server 8000 --bind 0.0.0.0</code>
+      <div class="command-note">Allows access from other devices on your network</div>
+    </div>
+
     <p><strong>Important:</strong> Open <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> (not <code>[::]</code> or <code>localhost</code>) for microphone access to work.</p>
     <p>For other devices on your network, use your computer's IP address (e.g., <code>http://192.168.1.x:8000</code>).</p>
 
     <h3>Option 2: Using Node.js</h3>
-    <pre>npx serve .</pre>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Node.js (npx)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'npx serve .')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">npx serve .</code>
+    </div>
+
     <p>Or install globally: <code>npm install -g serve</code> then run <code>serve .</code></p>
 
     <h3>Option 3: Using PHP</h3>
-    <pre>php -S localhost:8000</pre>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">PHP</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'php -S localhost:8000')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">php -S localhost:8000</code>
+    </div>
 
     <div class="warning">
       <strong>Important:</strong> You must use a local web server. Opening index.html directly
@@ -110,7 +218,7 @@ On Windows, use 'python' instead of 'python3'
     </ol>
 
     <hr>
-    <p><a href="http://127.0.0.1:8000/">Launch Nedagram →</a></p>
+    <p><a href="http://127.0.0.1:8000/">Launch Nedagram &rarr;</a></p>
   </section>
 
   <section id="farsi" class="rtl" style="margin-top: 4rem;">
@@ -125,23 +233,60 @@ On Windows, use 'python' instead of 'python3'
     <h2>شروع سریع</h2>
 
     <h3>روش ۱: استفاده از Python (ساده‌ترین)</h3>
-    <p>یک ترمینال <b>در این پوشه</b> باز کنید و اجرا کنید:</p>
-    <pre style="direction: ltr; text-align: left;"># فقط برای استفاده محلی
-python3 -m http.server 8000 --bind 127.0.0.1
+    <p>یک ترمینال <b>در این پوشه</b> باز کنید و یکی از این دستورات را اجرا کنید:</p>
 
-# برای دسترسی شبکه (اشتراک با دستگاه‌های دیگر)
-python3 -m http.server 8000 --bind 0.0.0.0
-</pre>
- در ویندوز از 'python' به جای 'python3' استفاده کنید
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Python (فقط محلی)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'python3 -m http.server 8000 --bind 127.0.0.1')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">python3 -m http.server 8000 --bind 127.0.0.1</code>
+      <div class="command-note">در ویندوز از <code>python</code> به جای <code>python3</code> استفاده کنید</div>
+    </div>
 
- <p><strong>مهم:</strong> آدرس <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> را باز کنید (نه <code>[::]</code> یا <code>localhost</code>) تا دسترسی میکروفون کار کند.</p>
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Python (دسترسی شبکه)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'python3 -m http.server 8000 --bind 0.0.0.0')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">python3 -m http.server 8000 --bind 0.0.0.0</code>
+      <div class="command-note">اجازه دسترسی از دستگاه‌های دیگر در شبکه شما</div>
+    </div>
+
+    <p><strong>مهم:</strong> آدرس <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> را باز کنید (نه <code>[::]</code> یا <code>localhost</code>) تا دسترسی میکروفون کار کند.</p>
     <p>برای دستگاه‌های دیگر در شبکه، از آدرس IP کامپیوتر استفاده کنید (مثلاً <code>http://192.168.1.x:8000</code>).</p>
 
     <h3>روش ۲: استفاده از Node.js</h3>
-    <pre style="direction: ltr; text-align: left;">npx serve .</pre>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Node.js (npx)</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'npx serve .')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">npx serve .</code>
+    </div>
 
     <h3>روش ۳: استفاده از PHP</h3>
-    <pre style="direction: ltr; text-align: left;">php -S localhost:8000</pre>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">PHP</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'php -S localhost:8000')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">php -S localhost:8000</code>
+    </div>
 
     <div class="warning">
       <strong>مهم:</strong> باید از یک سرور وب محلی استفاده کنید. باز کردن مستقیم index.html
@@ -157,7 +302,36 @@ python3 -m http.server 8000 --bind 0.0.0.0
     </ol>
 
     <hr>
-    <p><a href="http://127.0.0.1:8000/">← اجرای نداگرام</a></p>
+    <p><a href="http://127.0.0.1:8000/">&larr; اجرای نداگرام</a></p>
   </section>
+
+  <script>
+    function copyCommand(btn, command) {
+      navigator.clipboard.writeText(command).then(() => {
+        const originalText = btn.innerHTML;
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg> Copied!';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = originalText;
+        }, 2000);
+      }).catch(() => {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = command;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        btn.classList.add('copied');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg> Copied!';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = originalText;
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>
