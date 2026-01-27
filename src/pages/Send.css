@@ -1,0 +1,317 @@
+.send-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.page-title {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-xs);
+}
+
+.settings-row {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.setting-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.setting-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  min-width: 35px;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.mode-toggle.compact {
+  border-radius: var(--radius-sm);
+}
+
+.mode-btn {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.mode-btn:hover {
+  color: var(--color-text);
+}
+
+.mode-btn.active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.input-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.file-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-sm);
+}
+
+.warning-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-warning);
+  padding: var(--space-sm);
+  background: rgba(196, 163, 94, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+.error-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+  padding: var(--space-sm);
+  background: rgba(196, 94, 94, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+.action-section {
+  margin-top: var(--space-sm);
+}
+
+.result-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: opacity 0.2s ease;
+}
+
+.result-section.stale {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.audio-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.audio-controls .encrypted-badge {
+  margin-left: auto;
+}
+
+.result-stats {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.stat-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.stat-value {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.qr-section {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* Encryption UI - Inline */
+.input-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.encrypt-inline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.encrypt-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.encrypt-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.encrypt-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.password-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+}
+
+.password-input-container {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.password-input {
+  padding: var(--space-xs) var(--space-sm);
+  padding-right: 36px;
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.password-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.password-toggle:hover {
+  color: var(--color-text);
+  background: var(--color-border);
+}
+
+/* Password strength bar - simple line under input */
+.password-strength-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+  transition: background-color 0.2s ease;
+}
+
+.password-strength-bar.strength-weak {
+  background: linear-gradient(to right, var(--color-error) 33%, var(--color-border) 33%);
+}
+
+.password-strength-bar.strength-fair {
+  background: linear-gradient(to right, var(--color-warning) 66%, var(--color-border) 66%);
+}
+
+.password-strength-bar.strength-strong {
+  background: var(--color-success);
+}
+
+.encrypted-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: rgba(180, 100, 100, 0.15);
+  color: #b86464;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  border: 1px solid rgba(180, 100, 100, 0.3);
+}
+
+.encrypted-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: #b86464;
+  border-radius: 50%;
+}
+
+.encrypted-badge .stat-value {
+  color: inherit;
+  font-weight: 500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  .settings-row {
+    gap: var(--space-md);
+  }
+
+  .password-wrapper {
+    width: 100%;
+    min-width: unset;
+  }
+}

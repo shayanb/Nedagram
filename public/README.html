@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nedagram Offline - Instructions</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+      line-height: 1.6;
+      color: #333;
+      direction: ltr;
+    }
+    h1 { color: #9D7E8A; }
+    h2 { margin-top: 2rem; }
+    code {
+      background: #f4f4f4;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    .warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 1rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+    }
+    .success {
+      background: #d4edda;
+      border: 1px solid #28a745;
+      padding: 1rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+    }
+    .lang-switch {
+      text-align: right;
+      margin-bottom: 1rem;
+    }
+    .rtl {
+      direction: rtl;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+  <div class="lang-switch">
+    <a href="#english">English</a> | <a href="#farsi">فارسی</a>
+  </div>
+
+  <section id="english">
+    <h1>Nedagram Offline Version</h1>
+
+    <p>This package contains everything you need to run Nedagram completely offline, without any internet connection.</p>
+
+    <div class="success">
+      <strong>Good news:</strong> Once you run a local server, the app will work fully offline - including encoding and decoding audio!
+    </div>
+
+    <h2>Quick Start</h2>
+
+    <h3>Option 1: Using Python (Easiest)</h3>
+    <p>Open a terminal/command prompt <b>in Nedagram folder </b> and run:</p>
+    <pre>
+python3 -m http.server 8000 --bind 127.0.0.1
+
+# Or for network access (share with other devices)
+python3 -m http.server 8000 --bind 0.0.0.0
+</pre>
+On Windows, use 'python' instead of 'python3'
+    <p><strong>Important:</strong> Open <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> (not <code>[::]</code> or <code>localhost</code>) for microphone access to work.</p>
+    <p>For other devices on your network, use your computer's IP address (e.g., <code>http://192.168.1.x:8000</code>).</p>
+
+    <h3>Option 2: Using Node.js</h3>
+    <pre>npx serve .</pre>
+    <p>Or install globally: <code>npm install -g serve</code> then run <code>serve .</code></p>
+
+    <h3>Option 3: Using PHP</h3>
+    <pre>php -S localhost:8000</pre>
+
+    <div class="warning">
+      <strong>Important:</strong> You must use a local web server. Opening index.html directly
+      (file://) won't work because browsers block microphone access and service workers for local files.
+    </div>
+
+    <h2>What's Included</h2>
+    <ul>
+      <li><code>index.html</code> - Main application</li>
+      <li><code>assets/</code> - JavaScript and CSS files</li>
+      <li><code>sw.js</code> - Service worker for offline caching</li>
+      <li><code>manifest.json</code> - PWA manifest</li>
+      <li><code>icons/</code> - App icons</li>
+    </ul>
+
+    <h2>Sharing This Package</h2>
+    <p>You can share this entire folder (as a zip) with others. They just need to:</p>
+    <ol>
+      <li>Extract the files to a folder</li>
+      <li>Run a local web server (see options above)</li>
+      <li>Open http://localhost:8000 in their browser</li>
+    </ol>
+
+    <hr>
+    <p><a href="http://127.0.0.1:8000/">Launch Nedagram →</a></p>
+  </section>
+
+  <section id="farsi" class="rtl" style="margin-top: 4rem;">
+    <h1>نداگرام - نسخه آفلاین</h1>
+
+    <p>این بسته شامل همه چیزهایی است که برای اجرای نداگرام به صورت کاملاً آفلاین، بدون هیچ اتصال اینترنتی نیاز دارید.</p>
+
+    <div class="success">
+      <strong>خبر خوب:</strong> پس از اجرای سرور محلی، برنامه کاملاً آفلاین کار می‌کند - شامل کدگذاری و رمزگشایی صدا!
+    </div>
+
+    <h2>شروع سریع</h2>
+
+    <h3>روش ۱: استفاده از Python (ساده‌ترین)</h3>
+    <p>یک ترمینال <b>در این پوشه</b> باز کنید و اجرا کنید:</p>
+    <pre style="direction: ltr; text-align: left;"># فقط برای استفاده محلی
+python3 -m http.server 8000 --bind 127.0.0.1
+
+# برای دسترسی شبکه (اشتراک با دستگاه‌های دیگر)
+python3 -m http.server 8000 --bind 0.0.0.0
+</pre>
+ در ویندوز از 'python' به جای 'python3' استفاده کنید
+
+ <p><strong>مهم:</strong> آدرس <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> را باز کنید (نه <code>[::]</code> یا <code>localhost</code>) تا دسترسی میکروفون کار کند.</p>
+    <p>برای دستگاه‌های دیگر در شبکه، از آدرس IP کامپیوتر استفاده کنید (مثلاً <code>http://192.168.1.x:8000</code>).</p>
+
+    <h3>روش ۲: استفاده از Node.js</h3>
+    <pre style="direction: ltr; text-align: left;">npx serve .</pre>
+
+    <h3>روش ۳: استفاده از PHP</h3>
+    <pre style="direction: ltr; text-align: left;">php -S localhost:8000</pre>
+
+    <div class="warning">
+      <strong>مهم:</strong> باید از یک سرور وب محلی استفاده کنید. باز کردن مستقیم index.html
+      (file://) کار نمی‌کند چون مرورگرها دسترسی میکروفون را برای فایل‌های محلی مسدود می‌کنند.
+    </div>
+
+    <h2>اشتراک‌گذاری این بسته</h2>
+    <p>می‌توانید این پوشه را (به صورت zip) با دیگران به اشتراک بگذارید. آن‌ها فقط باید:</p>
+    <ol>
+      <li>فایل‌ها را در یک پوشه استخراج کنند</li>
+      <li>یک سرور وب محلی اجرا کنند</li>
+      <li>http://localhost:8000 را در مرورگر باز کنند</li>
+    </ol>
+
+    <hr>
+    <p><a href="http://127.0.0.1:8000/">← اجرای نداگرام</a></p>
+  </section>
+</body>
+</html>

@@ -1,0 +1,28 @@
+.signal-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.signal-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.signal-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 24px;
+}
+
+.signal-bar {
+  width: 6px;
+  background: var(--color-border);
+  border-radius: 2px;
+  transition: background var(--transition-fast);
+}
+
+.signal-bar.active {
+  background: var(--color-accent);
+}

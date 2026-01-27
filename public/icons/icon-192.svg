@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="24" fill="#9D7E8A"/>
+  <g transform="translate(96, 96)">
+    <!-- Sound waves -->
+    <circle cx="0" cy="0" r="20" fill="none" stroke="white" stroke-width="6"/>
+    <circle cx="0" cy="0" r="40" fill="none" stroke="white" stroke-width="5" opacity="0.7"/>
+    <circle cx="0" cy="0" r="60" fill="none" stroke="white" stroke-width="4" opacity="0.4"/>
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="8" fill="white"/>
+  </g>
+</svg>
