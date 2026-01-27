@@ -11,7 +11,7 @@ import { signal } from '@preact/signals';
 import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, type AudioMode } from '../utils/constants';
 import { bytesToString } from '../utils/helpers';
 import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
-import { decodeDataFEC, autoDetectAndDecodeHeader, autoDetectAndDecodeHeaderWithRedundancy, getHeaderSizes } from './fec';
+import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize } from './fec';
 import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } from './deframe';
 import { processPayload, type ProcessResult } from './decompress';
 import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
@@ -658,52 +658,41 @@ export class Decoder {
   private processHeader(): void {
     const symbols = this.phaseSymbols[this.bestPhase];
 
-    // Get header sizes for both FEC modes
-    const headerSizes = getHeaderSizes();
-    const headerSymbolsNormal = this.calculateSymbolsForBytes(headerSizes.normal); // 28 bytes
-    const headerSymbolsRobust = this.calculateSymbolsForBytes(headerSizes.robust); // 44 bytes
+    // Get header size (12 + 16 = 28 bytes)
+    const headerBytes = getHeaderSize();
+    const headerSymbols = this.calculateSymbolsForBytes(headerBytes);
 
     const symbolsAfterSync = symbols.length - this.syncFoundAt;
 
-    // Wait for enough symbols for the larger (robust) size to enable auto-detection
-    if (symbolsAfterSync < headerSymbolsRobust) {
-      this.lastDebugInfo = `Header: ${symbolsAfterSync}/${headerSymbolsRobust} symbols (auto-detect)`;
+    // Wait for enough symbols
+    if (symbolsAfterSync < headerSymbols) {
+      this.lastDebugInfo = `Header: ${symbolsAfterSync}/${headerSymbols} symbols`;
       return;
     }
 
-    console.log('[Decoder] Got enough symbols for header auto-detection...');
+    console.log('[Decoder] Got enough symbols for header...');
 
-    // Extract symbols for both sizes
+    // Extract header symbols
     const headerStart = this.syncFoundAt;
-    const symbolsNormal = symbols.slice(headerStart, headerStart + headerSymbolsNormal);
-    const symbolsRobust = symbols.slice(headerStart, headerStart + headerSymbolsRobust);
+    const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
 
-    console.log('[Decoder] Header symbols (first 20):', symbolsNormal.slice(0, 20));
+    console.log('[Decoder] Header symbols (first 20):', headerSymbolsArr.slice(0, 20));
 
-    // Convert to bytes for both sizes
-    const bytesNormalRaw = this.symbolsToBytes(symbolsNormal, headerSizes.normal);
-    const bytesRobustRaw = this.symbolsToBytes(symbolsRobust, headerSizes.robust);
+    // Convert to bytes
+    const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
 
     // Deinterleave bytes (reverse of encoder interleaving)
-    const bytesNormal = deinterleave(
-      bytesNormalRaw,
-      calculateInterleaverDepth(headerSizes.normal),
-      headerSizes.normal
-    );
-    const bytesRobust = deinterleave(
-      bytesRobustRaw,
-      calculateInterleaverDepth(headerSizes.robust),
-      headerSizes.robust
+    const bytes = deinterleave(
+      bytesRaw,
+      calculateInterleaverDepth(headerBytes),
+      headerBytes
     );
 
-    console.log('[Decoder] Header bytes normal (first 10):', Array.from(bytesNormal.slice(0, 10)));
+    console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
     console.log('[Decoder] Expected: [78, 49, ...] = "N1" magic');
 
-    // Try auto-detection with single header first
-    let decodeResult = autoDetectAndDecodeHeader(bytesNormal, bytesRobust);
-    let detectedMode = decodeResult.detectedMode;
-    const headerSymbols = detectedMode === 'normal' ? headerSymbolsNormal : headerSymbolsRobust;
-    const headerBytes = detectedMode === 'normal' ? headerSizes.normal : headerSizes.robust;
+    // Try to decode header
+    let decodeResult = decodeHeaderFEC(bytes);
 
     if (decodeResult.success) {
       const header = parseHeaderFrame(decodeResult.data);
@@ -714,34 +703,23 @@ export class Decoder {
         this.headerRepeated = header.totalFrames > 1;
 
         if (this.headerRepeated && symbolsAfterSync >= headerSymbols * 2) {
-          // Try second copy for better reliability with detected mode
+          // Try second copy for better reliability
           const symbols2Start = headerStart + headerSymbols;
-          const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
-          const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-          const bytes2NormalRaw = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-          const bytes2RobustRaw = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
-          // Deinterleave second copy
-          const bytes2Normal = deinterleave(
-            bytes2NormalRaw,
-            calculateInterleaverDepth(headerSizes.normal),
-            headerSizes.normal
-          );
-          const bytes2Robust = deinterleave(
-            bytes2RobustRaw,
-            calculateInterleaverDepth(headerSizes.robust),
-            headerSizes.robust
+          const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+          const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+          const bytes2 = deinterleave(
+            bytes2Raw,
+            calculateInterleaverDepth(headerBytes),
+            headerBytes
           );
 
-          const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
-            bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
-          );
+          const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
 
           if (decodeResult2.success) {
             const header2 = parseHeaderFrame(decodeResult2.data);
             if (header2 && header2.crcValid) {
               console.log('[Decoder] Used redundant header copy');
               decodeResult = decodeResult2;
-              detectedMode = decodeResult2.detectedMode;
             }
           }
         }
@@ -752,39 +730,28 @@ export class Decoder {
         this.consecutiveHeaderFailures = 0;  // Reset failure counter on success
 
         this.state = 'receiving_data';
-        this.lastDebugInfo = `Header OK (${detectedMode} FEC)! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
-        console.log('[Decoder] Header valid! Mode:', detectedMode, 'Expecting', header.totalFrames, 'frames');
+        this.lastDebugInfo = `Header OK! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
+        console.log('[Decoder] Header valid! Expecting', header.totalFrames, 'frames');
         return;
       } else {
         const reason = header ? 'CRC invalid' : 'Parse failed';
         console.log('[Decoder] Header invalid:', reason);
       }
     } else {
-      console.log('[Decoder] Header FEC auto-detect failed');
+      console.log('[Decoder] Header FEC decode failed');
 
       // If we have enough for second copy, try with redundancy
-      const headerSymbolsMax = headerSymbolsRobust;
-      if (symbolsAfterSync >= headerSymbolsMax * 2) {
-        const symbols2Start = headerStart + headerSymbolsMax;
-        const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
-        const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-        const bytes2NormalRaw = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-        const bytes2RobustRaw = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
-        // Deinterleave second copy
-        const bytes2Normal = deinterleave(
-          bytes2NormalRaw,
-          calculateInterleaverDepth(headerSizes.normal),
-          headerSizes.normal
-        );
-        const bytes2Robust = deinterleave(
-          bytes2RobustRaw,
-          calculateInterleaverDepth(headerSizes.robust),
-          headerSizes.robust
+      if (symbolsAfterSync >= headerSymbols * 2) {
+        const symbols2Start = headerStart + headerSymbols;
+        const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+        const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+        const bytes2 = deinterleave(
+          bytes2Raw,
+          calculateInterleaverDepth(headerBytes),
+          headerBytes
         );
 
-        const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
-          bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
-        );
+        const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
 
         if (decodeResult2.success) {
           const header = parseHeaderFrame(decodeResult2.data);
@@ -795,8 +762,8 @@ export class Decoder {
             this.totalErrorsFixed += Math.max(0, decodeResult2.correctedErrors);
 
             this.state = 'receiving_data';
-            this.lastDebugInfo = `Header OK (${decodeResult2.detectedMode} FEC, redundant)! Frames: ${header.totalFrames}`;
-            console.log('[Decoder] Header valid from redundant copy! Mode:', decodeResult2.detectedMode);
+            this.lastDebugInfo = `Header OK (redundant)! Frames: ${header.totalFrames}`;
+            console.log('[Decoder] Header valid from redundant copy!');
             return;
           }
         }

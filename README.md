@@ -51,10 +51,8 @@ Nedagram was built to help share text data when sending files or copy-paste isn'
 - **Two Audio Modes**
   - **Phone Mode** - Works over standard phone calls (300-3400 Hz)
   - **Wideband Mode** - Faster transmission for direct device-to-device or HD Voice
-- **Two FEC Modes**
-  - **Normal FEC** - Standard error correction (16 parity bytes)
-  - **Robust FEC** - Enhanced for noisy environments (32 parity bytes)
-- **Auto-Detection** - Receiver automatically detects transmission mode and FEC settings
+- **Error Correction** - Reed-Solomon FEC with 16 parity bytes per frame
+- **Auto-Detection** - Receiver automatically detects transmission mode
 - **Compression** - DEFLATE compression reduces transmission time
 - **Integrity Verification** - SHA-256 checksum for sender/receiver verification
 - **QR Code Fallback** - For small payloads (< 2KB)
@@ -81,11 +79,10 @@ Share configuration files, complex passwords, or long URLs via:
 1. Open [Nedagram](https://nedagram.com) on the sending device
 2. Paste your text or upload a file
 3. Select **Phone** (for calls) or **Wideband** (for direct transfer)
-4. Select **Normal FEC** or **Robust FEC** (for noisy environments)
-5. Optionally enable **Encrypt** and enter a password
-6. Click **Generate Audio**
-7. Play the audio near the receiving device
-8. Share the SHA-256 checksum (and password if encrypted) with the receiver
+4. Optionally enable **Encrypt** and enter a password
+5. Click **Generate Audio**
+6. Play the audio near the receiving device
+7. Share the SHA-256 checksum (and password if encrypted) with the receiver
 
 ### Receiving
 1. Open [Nedagram](https://nedagram.com) on the receiving device
@@ -118,10 +115,10 @@ Share configuration files, complex passwords, or long URLs via:
 | Effective Bitrate | ~50-60 bps |
 
 ### Error Correction (Reed-Solomon)
-| Mode | Parity Bytes | Error Correction |
-|------|--------------|------------------|
-| Normal FEC | 16 bytes | Up to 8 errors/frame |
-| Robust FEC | 32 bytes | Up to 16 errors/frame |
+| Parameter | Value |
+|-----------|-------|
+| Parity Bytes | 16 per frame |
+| Error Correction | Up to 8 bytes/frame |
 
 ### Synchronization
 | Component | Description |
@@ -160,8 +157,7 @@ Share configuration files, complex passwords, or long URLs via:
 2. **Volume at 70-80%** - Too loud causes distortion, too quiet loses signal
 3. **Distance 0.5-1m** - Optimal range for speaker-to-microphone
 4. **Keep devices steady** - Movement during transmission can cause errors
-5. **Use Robust FEC** - In noisy conditions or over phone calls
-6. **Verify checksum** - Always compare SHA-256 to confirm integrity
+5. **Verify checksum** - Always compare SHA-256 to confirm integrity
 
 ## Offline Distribution
 

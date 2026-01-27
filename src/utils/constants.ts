@@ -82,20 +82,8 @@ export function getAudioMode(): AudioMode {
 // Initialize with phone mode
 setAudioMode('phone');
 
-// FEC mode type
-export type FECMode = 'normal' | 'robust';
-
-// FEC mode settings
-const FEC_NORMAL = {
-  RS_PARITY_SIZE: 16,       // 16 bytes = correct up to 8 errors
-};
-
-const FEC_ROBUST = {
-  RS_PARITY_SIZE: 32,       // 32 bytes = correct up to 16 errors
-};
-
-// Current FEC mode
-let currentFECMode: FECMode = 'normal';
+// FEC settings - single mode with 16 parity bytes
+// Corrects up to 8 byte errors per frame
 
 // Frame structure - optimized for minimal overhead
 export const FRAME = {
@@ -103,8 +91,8 @@ export const FRAME = {
   PAYLOAD_SIZE: 128,        // Max payload per frame
   MIN_PAYLOAD_SIZE: 32,     // Min payload (for small messages)
 
-  // RS parity - default to normal mode
-  RS_PARITY_SIZE: 16,       // Updated dynamically by setFECMode
+  // RS parity - 16 bytes = corrects up to 8 byte errors per frame
+  RS_PARITY_SIZE: 16,
 
   // Header - compact format (12 bytes vs old 25)
   HEADER_SIZE: 12,
@@ -121,19 +109,6 @@ export const FRAME = {
   COMPRESSION_DEFLATE: 1,
 };
 
-export function setFECMode(mode: FECMode): void {
-  currentFECMode = mode;
-  const settings = mode === 'normal' ? FEC_NORMAL : FEC_ROBUST;
-  (FRAME as any).RS_PARITY_SIZE = settings.RS_PARITY_SIZE;
-  console.log('[FEC] Mode set to:', mode, 'Parity bytes:', FRAME.RS_PARITY_SIZE);
-}
-
-export function getFECMode(): FECMode {
-  return currentFECMode;
-}
-
-// Initialize with normal mode
-setFECMode('normal');
 
 // Limits
 export const LIMITS = {

@@ -1,12 +1,11 @@
 import { useI18n } from '../i18n';
 import { BUILD_VERSION, formatBuildTime } from '../utils/version';
-import { getAudioMode, getFECMode } from '../utils/constants';
+import { getAudioMode } from '../utils/constants';
 import './Help.css';
 
 export function Help() {
   const { t } = useI18n();
   const mode = getAudioMode();
-  const fecMode = getFECMode();
 
   return (
     <div class="help-page">
@@ -97,30 +96,6 @@ export function Help() {
           <p class="mode-tradeoff">{t.help.widebandModeTradeoff}</p>
         </div>
 
-        <h4>{t.help.fecMode}</h4>
-        <p class="mode-note">{t.help.fecModeNote}</p>
-
-        <div class="mode-card">
-          <h5>{t.help.normalFec}</h5>
-          <p>{t.help.normalFecDesc}</p>
-          <ul class="mode-examples">
-            {t.help.normalFecExamples.map((example, i) => (
-              <li key={i}>{example}</li>
-            ))}
-          </ul>
-          <p class="mode-tradeoff">{t.help.normalFecTradeoff}</p>
-        </div>
-
-        <div class="mode-card">
-          <h5>{t.help.robustFec}</h5>
-          <p>{t.help.robustFecDesc}</p>
-          <ul class="mode-examples">
-            {t.help.robustFecExamples.map((example, i) => (
-              <li key={i}>{example}</li>
-            ))}
-          </ul>
-          <p class="mode-tradeoff">{t.help.robustFecTradeoff}</p>
-        </div>
       </section>
 
       <section class="help-section specs">
@@ -164,11 +139,11 @@ export function Help() {
 
         <h4>Error Correction (Reed-Solomon)</h4>
         <dl class="spec-list">
-          <dt>Normal Mode</dt>
-          <dd>RS(n, n-16) - corrects up to 8 byte errors per frame</dd>
+          <dt>Parity Bytes</dt>
+          <dd>16 bytes per frame</dd>
 
-          <dt>Robust Mode</dt>
-          <dd>RS(n, n-32) - corrects up to 16 byte errors per frame</dd>
+          <dt>Error Correction</dt>
+          <dd>Up to 8 byte errors per frame</dd>
         </dl>
 
         <h4>Synchronization</h4>
@@ -231,9 +206,6 @@ export function Help() {
 
           <dt>Audio Mode</dt>
           <dd>{mode === 'phone' ? 'Phone (800-2300 Hz, 4 tones)' : 'Wideband (1800-5700 Hz, 16 tones)'}</dd>
-
-          <dt>FEC Mode</dt>
-          <dd>{fecMode === 'normal' ? 'Normal (16 parity bytes)' : 'Robust (32 parity bytes)'}</dd>
 
           <dt>Source Code</dt>
           <dd><a href="https://github.com/shayanb/nedagram" target="_blank" rel="noopener noreferrer">github.com/shayanb/nedagram</a></dd>
