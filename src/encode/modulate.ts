@@ -133,15 +133,17 @@ export function generatePreamble(sampleRate: number): Float32Array {
 
 /**
  * Convert bytes to symbols based on current audio mode
- * Phone mode: 3-bit symbols (8 tones)
- * Wideband mode: 4-bit symbols (16 tones)
+ * Uses BITS_PER_SYMBOL from audio settings:
+ * - 4 tones = 2 bits/symbol
+ * - 8 tones = 3 bits/symbol
+ * - 16 tones = 4 bits/symbol
  */
 function bytesToSymbols(bytes: Uint8Array): number[] {
-  const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+  const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
   const symbolMask = (1 << bitsPerSymbol) - 1;
 
+  // Special case: 4 bits per symbol = exactly 2 symbols per byte
   if (bitsPerSymbol === 4) {
-    // Wideband: 4 bits per symbol = 2 symbols per byte
     const symbols: number[] = [];
     for (let i = 0; i < bytes.length; i++) {
       symbols.push((bytes[i] >> 4) & 0x0F);
@@ -150,7 +152,7 @@ function bytesToSymbols(bytes: Uint8Array): number[] {
     return symbols;
   }
 
-  // Phone: 3 bits per symbol
+  // General case: bit packing for 2 or 3 bits per symbol
   const symbols: number[] = [];
   let bitBuffer = 0;
   let bitsInBuffer = 0;
@@ -177,7 +179,7 @@ function bytesToSymbols(bytes: Uint8Array): number[] {
  * Calculate number of symbols needed for given bytes
  */
 export function calculateSymbolCount(byteCount: number): number {
-  const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+  const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
   const totalBits = byteCount * 8;
   return Math.ceil(totalBits / bitsPerSymbol);
 }

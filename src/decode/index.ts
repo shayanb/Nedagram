@@ -519,10 +519,10 @@ export class Decoder {
 
   /**
    * Calculate number of symbols needed for given bytes
-   * Phone mode: 3-bit symbols, Wideband: 4-bit symbols
+   * Uses BITS_PER_SYMBOL from audio settings
    */
   private calculateSymbolsForBytes(byteCount: number): number {
-    const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+    const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
     return Math.ceil((byteCount * 8) / bitsPerSymbol);
   }
 
@@ -824,14 +824,14 @@ export class Decoder {
 
   /**
    * Convert symbols back to bytes
-   * Phone mode: 3-bit symbols, Wideband: 4-bit symbols
+   * Uses BITS_PER_SYMBOL from audio settings
    */
   private symbolsToBytes(symbols: number[], expectedBytes: number): Uint8Array {
-    const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+    const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
     const symbolMask = (1 << bitsPerSymbol) - 1;
 
+    // Special case: 4 bits per symbol = exactly 2 symbols per byte
     if (bitsPerSymbol === 4) {
-      // Wideband: 4 bits per symbol = 2 symbols per byte
       const bytes = new Uint8Array(expectedBytes);
       for (let i = 0; i < expectedBytes; i++) {
         const high = symbols[i * 2] & 0x0F;
@@ -841,7 +841,7 @@ export class Decoder {
       return bytes;
     }
 
-    // Phone: 3 bits per symbol
+    // General case: bit unpacking for 2 or 3 bits per symbol
     const bytes = new Uint8Array(expectedBytes);
     let bitBuffer = 0;
     let bitsInBuffer = 0;
