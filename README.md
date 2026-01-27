@@ -98,15 +98,18 @@ Share configuration files, complex passwords, or long URLs via:
 
 ## Technical Specifications
 
-### Phone Mode (300-3400 Hz)
+### Phone Mode (Optimized for GSM/Phone Calls)
 | Parameter | Value |
 |-----------|-------|
-| Modulation | 8-MFSK (3 bits/symbol) |
-| Frequency Range | 600 - 3050 Hz |
-| Symbol Duration | 50ms + 8ms guard |
-| Effective Bitrate | ~30-35 bps |
+| Modulation | 4-MFSK (2 bits/symbol) |
+| Tone Frequencies | 800, 1300, 1800, 2300 Hz |
+| Tone Spacing | 500 Hz (wide for codec tolerance) |
+| Symbol Duration | 50ms + 12ms guard |
+| Effective Bitrate | ~20-25 bps |
+| Synchronization | Chirp matched filter detection |
+| Burst Protection | Block interleaving enabled |
 
-### Wideband Mode (HD Voice)
+### Wideband Mode (HD Voice / Direct)
 | Parameter | Value |
 |-----------|-------|
 | Modulation | 16-MFSK (4 bits/symbol) |
@@ -119,6 +122,15 @@ Share configuration files, complex passwords, or long URLs via:
 |------|--------------|------------------|
 | Normal FEC | 16 bytes | Up to 8 errors/frame |
 | Robust FEC | 32 bytes | Up to 16 errors/frame |
+
+### Synchronization
+| Component | Description |
+|-----------|-------------|
+| Warmup Tone | 200ms steady tone for audio path wake-up |
+| Chirp Sweep | 800ms up-down frequency sweep (600-2600 Hz) |
+| Matched Filter | Cross-correlation detection for robust sync |
+| Calibration | 4 tones repeated 2x for level calibration |
+| Sync Pattern | 8-symbol alternating pattern |
 
 ### Encryption (Optional)
 | Parameter | Value |
@@ -136,11 +148,11 @@ Share configuration files, complex passwords, or long URLs via:
 
 | Payload Size | Phone Mode | Wideband Mode |
 |--------------|------------|---------------|
-| 100 bytes | ~30 sec | ~20 sec |
-| 1 KB | ~4 min | ~2.5 min |
-| 10 KB | ~40 min | ~25 min |
+| 100 bytes | ~45 sec | ~20 sec |
+| 1 KB | ~6 min | ~2.5 min |
+| 10 KB | ~55 min | ~25 min |
 
-*Times are approximate and include preamble, headers, and FEC overhead.*
+*Times are approximate and include preamble, headers, and FEC overhead. Phone mode is optimized for reliability over speed.*
 
 ## Tips for Best Results
 

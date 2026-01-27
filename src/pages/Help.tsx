@@ -126,22 +126,28 @@ export function Help() {
       <section class="help-section specs">
         <h3>{t.help.technicalSpecs}</h3>
 
-        <h4>Phone Mode (300-3400 Hz)</h4>
+        <h4>Phone Mode (Optimized for GSM/Phone Calls)</h4>
         <dl class="spec-list">
           <dt>Modulation</dt>
-          <dd>8-MFSK (3 bits per symbol)</dd>
+          <dd>4-MFSK (2 bits per symbol)</dd>
 
-          <dt>Frequency Range</dt>
-          <dd>600 - 3050 Hz</dd>
+          <dt>Tone Frequencies</dt>
+          <dd>800, 1300, 1800, 2300 Hz</dd>
+
+          <dt>Tone Spacing</dt>
+          <dd>500 Hz (wide for codec tolerance)</dd>
 
           <dt>Symbol Duration</dt>
-          <dd>50ms + 8ms guard</dd>
+          <dd>50ms + 12ms guard</dd>
 
           <dt>Effective Bitrate</dt>
-          <dd>~30-35 bps</dd>
+          <dd>~20-25 bps</dd>
+
+          <dt>Burst Protection</dt>
+          <dd>Block interleaving enabled</dd>
         </dl>
 
-        <h4>Wideband Mode (HD Voice)</h4>
+        <h4>Wideband Mode (HD Voice / Direct)</h4>
         <dl class="spec-list">
           <dt>Modulation</dt>
           <dd>16-MFSK (4 bits per symbol)</dd>
@@ -163,6 +169,24 @@ export function Help() {
 
           <dt>Robust Mode</dt>
           <dd>RS(n, n-32) - corrects up to 16 byte errors per frame</dd>
+        </dl>
+
+        <h4>Synchronization</h4>
+        <dl class="spec-list">
+          <dt>Warmup Tone</dt>
+          <dd>200ms steady tone for audio path wake-up</dd>
+
+          <dt>Chirp Sweep</dt>
+          <dd>800ms up-down frequency sweep (600-2600 Hz)</dd>
+
+          <dt>Detection Method</dt>
+          <dd>Matched filter cross-correlation (robust to noise)</dd>
+
+          <dt>Calibration</dt>
+          <dd>4 tones repeated 2x for level calibration</dd>
+
+          <dt>Sync Pattern</dt>
+          <dd>8-symbol alternating pattern</dd>
         </dl>
 
         <h4>Encryption (Optional)</h4>
@@ -191,9 +215,6 @@ export function Help() {
           <dt>Maximum Payload</dt>
           <dd>100 KB</dd>
 
-          <dt>Preamble</dt>
-          <dd>Warmup (200ms) + Chirp (800ms) + Calibration (2x) + Sync (8 symbols)</dd>
-
           <dt>Protocol Version</dt>
           <dd>2.0 (Compact)</dd>
         </dl>
@@ -209,7 +230,7 @@ export function Help() {
           <dd>{formatBuildTime()}</dd>
 
           <dt>Audio Mode</dt>
-          <dd>{mode === 'phone' ? 'Phone (600-3050 Hz)' : 'Wideband (1800-5700 Hz)'}</dd>
+          <dd>{mode === 'phone' ? 'Phone (800-2300 Hz, 4 tones)' : 'Wideband (1800-5700 Hz, 16 tones)'}</dd>
 
           <dt>FEC Mode</dt>
           <dd>{fecMode === 'normal' ? 'Normal (16 parity bytes)' : 'Robust (32 parity bytes)'}</dd>

@@ -1,10 +1,11 @@
 /**
  * Main decoding pipeline
  *
- * Flow: Audio → Multi-phase symbol extraction → Find sync → Decode
+ * Flow: Audio → Chirp detection → Symbol extraction → Sync → Decode
  *
- * Key insight: We don't know where symbol boundaries are when recording starts.
- * Solution: Try multiple phase offsets and find the one that produces valid patterns.
+ * Phase 2 improvement: Uses matched filter chirp detection for robust sync.
+ * The chirp detector finds the preamble even in noisy conditions, then
+ * precise timing is used to align symbol extraction.
  */
 import { signal } from '@preact/signals';
 import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, type AudioMode } from '../utils/constants';
@@ -15,6 +16,7 @@ import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } fro
 import { processPayload, type ProcessResult } from './decompress';
 import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
 import { sha256Hex } from '../lib/sha256';
+import { ChirpDetector } from '../lib/chirp';
 
 export type DecodeState =
   | 'idle'
@@ -89,8 +91,10 @@ export class Decoder {
   private bestPhase = -1;
   private syncFoundAt = -1;
 
-  // Chirp detection
+  // Chirp detection (Phase 2: matched filter)
+  private chirpDetector: ChirpDetector;
   private chirpDetected = false;
+  private chirpEndSample = -1;  // Sample index where chirp ends (calibration starts)
   private lastPeakFreq = 0;
   private chirpSweepCount = 0;
 
@@ -128,6 +132,9 @@ export class Decoder {
 
     // Buffer for ~10 seconds of audio
     this.sampleBuffer = new Float32Array(10 * sampleRate);
+
+    // Initialize chirp detector for robust preamble detection
+    this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
 
     // Initialize phase arrays
     for (let p = 0; p < NUM_PHASES; p++) {
@@ -223,6 +230,8 @@ export class Decoder {
     this.framesAttempted = new Set();
     this.headerRepeated = false;
     this.chirpDetected = false;
+    this.chirpEndSample = -1;
+    this.chirpDetector.reset();
     this.lastPeakFreq = 0;
     this.chirpSweepCount = 0;
     this.detectedAudioMode = null;
@@ -267,9 +276,17 @@ export class Decoder {
       return;
     }
 
-    // Detect chirp (frequency sweep) in the preamble
+    // Phase 2: Use matched filter chirp detection for robust sync
     if (!this.chirpDetected && this.state === 'detecting_preamble') {
-      this.detectChirp(samples);
+      const chirpResult = this.chirpDetector.addSamples(samples);
+      if (chirpResult.detected) {
+        this.chirpDetected = true;
+        this.chirpEndSample = chirpResult.chirpEndSample;
+        console.log('[Decoder] Chirp detected via matched filter! Confidence:', chirpResult.confidence.toFixed(3));
+        this.lastDebugInfo = `Chirp detected (${(chirpResult.confidence * 100).toFixed(0)}% confidence)`;
+      } else if (chirpResult.confidence > 0.15) {
+        this.lastDebugInfo = `Searching for chirp... (${(chirpResult.confidence * 100).toFixed(0)}% match)`;
+      }
     }
 
     // Extract symbols for all phases
@@ -277,7 +294,12 @@ export class Decoder {
 
     // Process based on state
     if (this.bestPhase < 0) {
-      this.findBestPhase();
+      // If chirp is detected, use precise timing; otherwise fall back to pattern search
+      if (this.chirpDetected && this.chirpEndSample > 0) {
+        this.findBestPhaseFromChirp();
+      } else {
+        this.findBestPhase();
+      }
     } else if (this.state === 'receiving_header') {
       this.processHeader();
     } else if (this.state === 'receiving_data') {
@@ -332,6 +354,110 @@ export class Decoder {
     }
 
     return result;
+  }
+
+  /**
+   * Phase 2: Use precise chirp timing to find symbol boundaries
+   *
+   * When chirp is detected via matched filter, we know exactly where it ends.
+   * From there, we can calculate where calibration and sync start, giving us
+   * precise symbol alignment without needing to search through multiple phases.
+   */
+  private findBestPhaseFromChirp(): void {
+    if (this.chirpEndSample <= 0) return;
+
+    // After chirp: warmup tone was before chirp, now we have calibration tones
+    // Structure: [warmup][chirp][calibration x2][sync x8][header][data...]
+    //                         ^-- chirpEndSample points here
+
+    const calibrationRepeats = AUDIO.CALIBRATION_REPEATS || 2;
+    const calibrationSymbols = AUDIO.CALIBRATION_TONES.length * calibrationRepeats;
+    const syncSymbols = AUDIO.SYNC_PATTERN.length;
+
+    // Calculate where header starts (after calibration + sync)
+    const symbolDurationSamples = this.symbolSamples;
+    const headerStartSample = this.chirpEndSample +
+      (calibrationSymbols + syncSymbols) * symbolDurationSamples;
+
+    // Calculate which phase aligns best with this timing
+    const sampleOffset = headerStartSample % symbolDurationSamples;
+    const bestPhaseEstimate = Math.round(sampleOffset / this.phaseOffset) % NUM_PHASES;
+
+    // Verify by checking if we can detect calibration/sync pattern at this alignment
+    const symbols = this.phaseSymbols[bestPhaseEstimate];
+
+    // Calculate which symbol index corresponds to the start of calibration
+    const calibStartSymbolIndex = Math.floor(this.chirpEndSample / symbolDurationSamples);
+
+    // Check if we have enough symbols
+    if (symbols.length < calibStartSymbolIndex + calibrationSymbols + syncSymbols + 10) {
+      this.lastDebugInfo = `Chirp found, waiting for symbols... (${symbols.length}/${calibStartSymbolIndex + 20})`;
+      return;
+    }
+
+    // Try to match calibration + sync pattern starting from the calculated position
+    // Try both phone and wideband modes
+    const modes: { mode: AudioMode; calib: number[]; sync: number[]; maxTone: number }[] = [
+      {
+        mode: 'phone',
+        calib: PHONE_MODE.CALIBRATION_TONES,
+        sync: PHONE_MODE.SYNC_PATTERN,
+        maxTone: PHONE_MODE.NUM_TONES - 1,
+      },
+      {
+        mode: 'wideband',
+        calib: WIDEBAND_MODE.CALIBRATION_TONES,
+        sync: WIDEBAND_MODE.SYNC_PATTERN,
+        maxTone: WIDEBAND_MODE.NUM_TONES - 1,
+      },
+    ];
+
+    // Search in a small window around the estimated position (±3 symbols)
+    for (let offset = -3; offset <= 3; offset++) {
+      const startIdx = calibStartSymbolIndex + offset;
+      if (startIdx < 0 || startIdx + calibrationSymbols + syncSymbols >= symbols.length) continue;
+
+      for (const { mode, calib, sync, maxTone } of modes) {
+        // Build expected pattern: calibration repeated + sync
+        const fullCalib: number[] = [];
+        for (let r = 0; r < calibrationRepeats; r++) {
+          fullCalib.push(...calib);
+        }
+        const fullPattern = [...fullCalib, ...sync];
+
+        // Check pattern match
+        let matchCount = 0;
+        const tolerance = maxTone > 10 ? 2 : 1;
+
+        for (let i = 0; i < fullPattern.length; i++) {
+          const expected = fullPattern[i];
+          const actual = symbols[startIdx + i];
+          if (actual === expected || Math.abs(actual - expected) <= tolerance) {
+            matchCount++;
+          }
+        }
+
+        const matchRatio = matchCount / fullPattern.length;
+
+        if (matchRatio >= 0.7) {  // 70% match threshold
+          this.bestPhase = bestPhaseEstimate;
+          this.syncFoundAt = startIdx + fullPattern.length;
+          this.detectedAudioMode = mode;
+          this.state = 'receiving_header';
+
+          setAudioMode(mode);
+          this.updateSymbolTiming();
+
+          console.log('[Decoder] Chirp-aligned sync found! Mode:', mode,
+                      'Phase:', bestPhaseEstimate, 'Match:', (matchRatio * 100).toFixed(0) + '%');
+          this.lastDebugInfo = `Sync found via chirp (${mode}, ${(matchRatio * 100).toFixed(0)}% match)`;
+          return;
+        }
+      }
+    }
+
+    // If chirp-based alignment didn't find pattern, fall back to exhaustive search
+    this.lastDebugInfo = 'Chirp found, searching for sync pattern...';
   }
 
   private findBestPhase(): void {
@@ -962,6 +1088,9 @@ export class Decoder {
     this.framesAttempted = new Set();
     this.headerRepeated = false;
     this.detectedAudioMode = null;
+    this.chirpDetected = false;
+    this.chirpEndSample = -1;
+    this.chirpDetector.reset();
     this.state = 'detecting_preamble';
     this.lastDebugInfo = 'Restarting detection... Play audio again';
     this.updateProgress();
