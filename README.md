@@ -261,6 +261,8 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 This software is provided "as is" for educational and research purposes. See [DISCLAIMER.md](DISCLAIMER.md) for full terms.
 
+**Note:** This code has not been audited. The audio encoding/decoding implementation is based on established research papers and popular codebases in the field, developed with AI assistance and guided by the author(s). Use at your own risk for sensitive applications.
+
 ## Acknowledgments
 
 Built with the goal of helping people communicate freely when traditional methods fail.

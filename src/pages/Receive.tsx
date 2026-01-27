@@ -12,7 +12,6 @@ import { getSampleRate } from '../audio/context';
 import { downloadWAV, parseAudioFile } from '../lib/wav';
 import { formatBytes } from '../utils/helpers';
 import { LIMITS } from '../utils/constants';
-import { DebugLog, enableDebugLog, isDebugLogEnabled } from '../components/DebugLog';
 import './Receive.css';
 
 const decoder = signal<Decoder | null>(null);
@@ -30,7 +29,7 @@ const showDecryptPassword = signal(false);
 const isProcessingFile = signal(false);
 const fileProgress = signal(0);
 const isDragging = signal(false);
-const showDebugLogs = signal(false);
+const dragCounter = signal(0); // Track nested drag enter/leave events
 
 export function Receive() {
   const { t } = useI18n();
@@ -69,6 +68,7 @@ export function Receive() {
         result.value = decodeResult;
         receiveState.value = 'complete';
         hasAudioRecording.value = true;
+        errorMessage.value = null; // Clear any error
         // Check if password is needed for encrypted data
         if (decodeResult.needsPassword) {
           needsPassword.value = true;
@@ -220,6 +220,7 @@ export function Receive() {
           result.value = decodeResult;
           receiveState.value = 'complete';
           isProcessingFile.value = false;
+          errorMessage.value = null; // Clear any error that was set prematurely
           if (decodeResult.needsPassword) {
             needsPassword.value = true;
           }
@@ -265,7 +266,8 @@ export function Receive() {
       }
 
       // If not complete yet, finalize
-      if (receiveState.value !== 'complete' && receiveState.value !== 'error') {
+      // Note: Check result.value as well since the success callback may have fired
+      if (receiveState.value !== 'complete' && receiveState.value !== 'error' && !result.value) {
         debugInfo.value = 'Processing complete - no valid transmission found';
         errorMessage.value = t.receive.noTransmissionFound;
         receiveState.value = 'error';
@@ -296,21 +298,31 @@ export function Receive() {
     fileInputRef.current?.click();
   }, []);
 
+  const handleDragEnter = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.value++;
+    isDragging.value = true;
+  }, []);
+
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    isDragging.value = true;
   }, []);
 
   const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    isDragging.value = false;
+    dragCounter.value--;
+    if (dragCounter.value === 0) {
+      isDragging.value = false;
+    }
   }, []);
 
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    dragCounter.value = 0;
     isDragging.value = false;
 
     const file = e.dataTransfer?.files?.[0];
@@ -318,11 +330,6 @@ export function Receive() {
       handleFileUpload(file);
     }
   }, [handleFileUpload]);
-
-  const handleDebugToggle = useCallback(() => {
-    showDebugLogs.value = !showDebugLogs.value;
-    enableDebugLog(showDebugLogs.value);
-  }, []);
 
   const isListening = receiveState.value !== 'idle' && receiveState.value !== 'complete' && receiveState.value !== 'error';
   const progress = decoder.value?.progress.value;
@@ -361,6 +368,7 @@ export function Receive() {
   return (
     <div
       class={`receive-page ${isDragging.value ? 'dragging' : ''}`}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -611,20 +619,6 @@ export function Receive() {
         </div>
       )}
 
-      {/* Debug log toggle */}
-      <button
-        class={`debug-log-toggle ${showDebugLogs.value ? 'active' : ''}`}
-        onClick={handleDebugToggle}
-        title={showDebugLogs.value ? 'Hide debug logs' : 'Show debug logs'}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
-      </button>
-
-      {/* Debug log panel */}
-      <DebugLog />
     </div>
   );
 }

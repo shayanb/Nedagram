@@ -1,11 +1,13 @@
 .debug-log {
   position: fixed;
-  bottom: var(--space-md);
+  bottom: 70px; /* Above the navbar */
   right: var(--space-md);
   max-width: 400px;
   z-index: 50;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
+  display: flex;
+  flex-direction: column-reverse; /* Collapse upward */
 }
 
 .debug-toggle {
@@ -21,11 +23,21 @@
   margin-left: auto;
   transition: all 0.15s ease;
   font-size: 11px;
+  order: 1; /* Toggle stays at bottom when collapsed */
+  opacity: 0.5;
 }
 
 .debug-toggle:hover {
+  opacity: 1;
   border-color: var(--color-primary);
   color: var(--color-text);
+}
+
+.debug-toggle.active {
+  opacity: 1;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
 }
 
 .debug-toggle .chevron {
@@ -37,10 +49,11 @@
 }
 
 .debug-entries {
-  margin-top: var(--space-xs);
+  margin-bottom: var(--space-xs); /* Above the toggle */
   max-height: 0;
   overflow: hidden;
   transition: max-height 0.3s ease;
+  order: 0; /* Entries appear above toggle */
 }
 
 .debug-log.expanded .debug-entries {
@@ -152,6 +165,7 @@
     right: var(--space-sm);
     left: var(--space-sm);
     max-width: none;
+    bottom: 80px; /* Ensure space for navbar on mobile */
   }
 
   .debug-log.expanded .debug-entries {

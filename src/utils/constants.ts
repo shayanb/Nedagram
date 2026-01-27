@@ -44,7 +44,7 @@ export const WIDEBAND_MODE = {
   CALIBRATION_REPEATS: 2,        // Repeat calibration tones
   SYNC_DURATION_MS: 80,
   CHIRP_START_HZ: 1500,
-  CHIRP_PEAK_HZ: 6000,
+  CHIRP_PEAK_HZ: 5000,           // Lowered from 6000 for better phone speaker reproduction
   CALIBRATION_TONES: [0, 5, 10, 15] as number[],
   SYNC_PATTERN: [0, 15, 0, 15, 0, 15, 0, 15] as number[],  // 8 symbols for reliability
   BITS_PER_SYMBOL: 4,

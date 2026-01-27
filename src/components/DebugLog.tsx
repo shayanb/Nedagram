@@ -125,7 +125,18 @@ export function DebugLog() {
   }, [logs.value.length]);
 
   const handleToggle = useCallback(() => {
-    isExpanded.value = !isExpanded.value;
+    // If not enabled, enable it and expand
+    if (!isEnabled.value) {
+      enableDebugLog(true);
+      isExpanded.value = true;
+    } else {
+      // If enabled, toggle expanded state
+      isExpanded.value = !isExpanded.value;
+      // If collapsing and was expanded, disable logging
+      if (!isExpanded.value) {
+        enableDebugLog(false);
+      }
+    }
     // Clear fading state when expanding
     if (isExpanded.value) {
       logs.value = logs.value.map(l => ({ ...l, fading: false }));
@@ -136,59 +147,65 @@ export function DebugLog() {
     clearDebugLogs();
   }, []);
 
-  if (!isEnabled.value) return null;
-
   const visibleLogs = isExpanded.value ? logs.value : logs.value.slice(-5);
 
   return (
-    <div class={`debug-log ${isExpanded.value ? 'expanded' : ''}`}>
-      {/* Toggle button */}
-      <button class="debug-toggle" onClick={handleToggle} title={isExpanded.value ? 'Collapse logs' : 'Expand logs'}>
+    <div class={`debug-log ${isExpanded.value ? 'expanded' : ''} ${isEnabled.value ? 'enabled' : ''}`}>
+      {/* Toggle button - always visible */}
+      <button
+        class={`debug-toggle ${isEnabled.value ? 'active' : ''}`}
+        onClick={handleToggle}
+        title={isEnabled.value ? (isExpanded.value ? 'Disable logs' : 'Expand logs') : 'Enable debug logs'}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <polyline points="14 2 14 8 20 8" />
           <line x1="16" y1="13" x2="8" y2="13" />
           <line x1="16" y1="17" x2="8" y2="17" />
         </svg>
-        <span>{logs.value.length}</span>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          class={`chevron ${isExpanded.value ? 'up' : ''}`}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        {isEnabled.value && <span>{logs.value.length}</span>}
+        {isEnabled.value && (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            class={`chevron ${isExpanded.value ? 'up' : ''}`}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        )}
       </button>
 
-      {/* Log entries */}
-      <div class="debug-entries" ref={scrollRef}>
-        {visibleLogs.map((log) => (
-          <div
-            key={log.id}
-            class={`debug-entry ${log.level} ${log.fading ? 'fading' : ''}`}
-          >
-            <span class="debug-time">
-              {new Date(log.timestamp).toLocaleTimeString('en-US', {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
-            </span>
-            <span class="debug-message">{log.message}</span>
-          </div>
-        ))}
-        {visibleLogs.length === 0 && isExpanded.value && (
-          <div class="debug-empty">No logs yet...</div>
-        )}
-      </div>
+      {/* Log entries - only when enabled */}
+      {isEnabled.value && (
+        <div class="debug-entries" ref={scrollRef}>
+          {visibleLogs.map((log) => (
+            <div
+              key={log.id}
+              class={`debug-entry ${log.level} ${log.fading ? 'fading' : ''}`}
+            >
+              <span class="debug-time">
+                {new Date(log.timestamp).toLocaleTimeString('en-US', {
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </span>
+              <span class="debug-message">{log.message}</span>
+            </div>
+          ))}
+          {visibleLogs.length === 0 && isExpanded.value && (
+            <div class="debug-empty">No logs yet...</div>
+          )}
+        </div>
+      )}
 
       {/* Clear button (only when expanded) */}
-      {isExpanded.value && logs.value.length > 0 && (
+      {isEnabled.value && isExpanded.value && logs.value.length > 0 && (
         <button class="debug-clear" onClick={handleClear}>
           Clear
         </button>
