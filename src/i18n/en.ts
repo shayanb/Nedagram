@@ -24,7 +24,7 @@ export const en = {
     frames: 'Frames',
     tooLarge: 'Payload exceeds maximum size (100KB)',
     largeWarning: 'Large payload - transmission may take several minutes',
-    widebandHint: 'For HD Voice calls or direct speaker-to-mic',
+    widebandHint: 'Direct Speaker to Mic or HD Voice calls',
     // Encryption
     encrypt: 'Encrypt',
     password: 'Password',

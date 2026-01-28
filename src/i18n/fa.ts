@@ -26,7 +26,7 @@ export const fa: Translations = {
     frames: 'فریم',
     tooLarge: 'حجم داده بیش از حد مجاز است (۱۰۰ کیلوبایت)',
     largeWarning: 'داده حجیم - انتقال ممکن است چند دقیقه طول بکشد',
-    widebandHint: 'برای تماس HD Voice یا مستقیم بلندگو به میکروفون',
+    widebandHint: 'برای مستقیم از بلندگو به میکروفون یا تماس HD Voice',
     // Encryption
     encrypt: 'رمزگذاری',
     password: 'رمز عبور',
