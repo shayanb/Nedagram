@@ -113,7 +113,7 @@ export const en = {
       'VoIP with low bitrate codecs',
       'Walkie-talkies or radio',
     ],
-    phoneModeTradeoff: 'Slower (~30-35 bps) but works in narrow bandwidth (300-3400 Hz)',
+    phoneModeTradeoff: 'Slower (~20-25 bps) but works in narrow bandwidth (300-3400 Hz)',
     widebandMode: 'Wideband Mode',
     widebandModeDesc: 'Use when transmitting device-to-device or over HD Voice calls.',
     widebandModeExamples: [
@@ -122,18 +122,18 @@ export const en = {
       'WhatsApp/Telegram voice calls',
       'High-quality VoIP',
     ],
-    widebandModeTradeoff: 'Faster (~50-60 bps) but requires wideband audio (up to 7 kHz)',
+    widebandModeTradeoff: 'Faster (~50-60 bps) but requires wideband audio (up to 6 kHz)',
     // Technical Specs section
     technicalSpecs: 'Technical Specs',
     versionInfo: 'Version Info',
     // Offline Download section
-    offlineDownload: 'Offline Version',
-    offlineDownloadDesc: 'Download Nedagram to use completely offline, with no internet connection required. Perfect for sharing with others who have limited internet access.',
+    offlineDownload: 'Offline Local Version',
+    offlineDownloadDesc: 'Download Nedagram to use completely offline on your computer, with no internet connection required. Perfect for sharing with others who have limited internet access.',
     offlineDownloadSteps: [
       'Download the offline package (ZIP file)',
       'Extract the files to a folder',
       'Run a local web server (see instructions in the package)',
-      'Open http://localhost:8000 in your browser',
+      'Open http://127.0.0.1:8000 in your browser',
     ],
     offlineDownloadNote: 'A local web server is required because browsers restrict microphone access for local files.',
     serverCommands: 'Start a local server (run in the extracted folder):',

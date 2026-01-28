@@ -10,7 +10,9 @@
 
 ## Why Nedagram?
 
-Nedagram was built to help share text data when sending files or copy-paste isn't possible. By converting text to audio, you can:
+> "ندا" (Neda) is a Persian feminine given name meaning "voice," "call," or "calling"
+
+Nedagram was built to help share text data when sending files isn't possible. By converting text to audio, you can:
 
 - Share data (config files, long urls, ...) over **phone calls** (cellular, landline, or VoIP)
 - Transfer between devices **without any internet connection**
