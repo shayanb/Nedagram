@@ -73,7 +73,8 @@ export function setAudioMode(mode: AudioMode): void {
     (_, i) => settings.BASE_FREQUENCY + i * settings.TONE_SPACING
   );
 
-  console.log('[Audio] Mode set to:', mode, 'Tones:', AUDIO.NUM_TONES, 'Base freq:', AUDIO.BASE_FREQUENCY);
+  // Debug log (uncomment for troubleshooting)
+  // console.log('[Audio] Mode set to:', mode, 'Tones:', AUDIO.NUM_TONES, 'Base freq:', AUDIO.BASE_FREQUENCY);
 }
 
 export function getAudioMode(): AudioMode {
