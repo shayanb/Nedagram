@@ -1,12 +1,52 @@
+import { useState, useCallback } from 'preact/hooks';
 import { useI18n } from '../i18n';
 import { BUILD_VERSION, formatBuildTime } from '../utils/version';
-import { getAudioMode, getFECMode } from '../utils/constants';
+import { getAudioMode } from '../utils/constants';
 import './Help.css';
+
+// Command block with copy button
+function CommandBlock({ command, label }: { command: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  }, [command]);
+
+  return (
+    <div class="command-block">
+      <span class="command-label">{label}</span>
+      <div class="command-row">
+        <code class="command-text">{command}</code>
+        <button
+          class={`copy-btn ${copied ? 'copied' : ''}`}
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy to clipboard'}
+        >
+          {copied ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function Help() {
   const { t } = useI18n();
   const mode = getAudioMode();
-  const fecMode = getFECMode();
 
   return (
     <div class="help-page">
@@ -52,6 +92,14 @@ export function Help() {
             <li key={i}>{step}</li>
           ))}
         </ol>
+
+        <div class="server-commands">
+          <p class="commands-title">{t.help.serverCommands}</p>
+          <CommandBlock label="Python" command="python3 -m http.server 8000 --bind 127.0.0.1" />
+          <CommandBlock label="Node.js" command="npx serve . -l 8000" />
+          <CommandBlock label="PHP" command="php -S 127.0.0.1:8000" />
+        </div>
+
         <p class="mode-note">{t.help.offlineDownloadNote}</p>
         <div class="offline-actions">
           {import.meta.env.PROD ? (
@@ -97,51 +145,33 @@ export function Help() {
           <p class="mode-tradeoff">{t.help.widebandModeTradeoff}</p>
         </div>
 
-        <h4>{t.help.fecMode}</h4>
-        <p class="mode-note">{t.help.fecModeNote}</p>
-
-        <div class="mode-card">
-          <h5>{t.help.normalFec}</h5>
-          <p>{t.help.normalFecDesc}</p>
-          <ul class="mode-examples">
-            {t.help.normalFecExamples.map((example, i) => (
-              <li key={i}>{example}</li>
-            ))}
-          </ul>
-          <p class="mode-tradeoff">{t.help.normalFecTradeoff}</p>
-        </div>
-
-        <div class="mode-card">
-          <h5>{t.help.robustFec}</h5>
-          <p>{t.help.robustFecDesc}</p>
-          <ul class="mode-examples">
-            {t.help.robustFecExamples.map((example, i) => (
-              <li key={i}>{example}</li>
-            ))}
-          </ul>
-          <p class="mode-tradeoff">{t.help.robustFecTradeoff}</p>
-        </div>
       </section>
 
       <section class="help-section specs">
         <h3>{t.help.technicalSpecs}</h3>
 
-        <h4>Phone Mode (300-3400 Hz)</h4>
+        <h4>Phone Mode (Optimized for GSM/Phone Calls)</h4>
         <dl class="spec-list">
           <dt>Modulation</dt>
-          <dd>8-MFSK (3 bits per symbol)</dd>
+          <dd>4-MFSK (2 bits per symbol)</dd>
 
-          <dt>Frequency Range</dt>
-          <dd>600 - 3050 Hz</dd>
+          <dt>Tone Frequencies</dt>
+          <dd>800, 1300, 1800, 2300 Hz</dd>
+
+          <dt>Tone Spacing</dt>
+          <dd>500 Hz (wide for codec tolerance)</dd>
 
           <dt>Symbol Duration</dt>
-          <dd>50ms + 8ms guard</dd>
+          <dd>50ms + 12ms guard</dd>
 
           <dt>Effective Bitrate</dt>
-          <dd>~30-35 bps</dd>
+          <dd>~20-25 bps</dd>
+
+          <dt>Burst Protection</dt>
+          <dd>Block interleaving enabled</dd>
         </dl>
 
-        <h4>Wideband Mode (HD Voice)</h4>
+        <h4>Wideband Mode (HD Voice / Direct)</h4>
         <dl class="spec-list">
           <dt>Modulation</dt>
           <dd>16-MFSK (4 bits per symbol)</dd>
@@ -158,11 +188,29 @@ export function Help() {
 
         <h4>Error Correction (Reed-Solomon)</h4>
         <dl class="spec-list">
-          <dt>Normal Mode</dt>
-          <dd>RS(n, n-16) - corrects up to 8 byte errors per frame</dd>
+          <dt>Parity Bytes</dt>
+          <dd>16 bytes per frame</dd>
 
-          <dt>Robust Mode</dt>
-          <dd>RS(n, n-32) - corrects up to 16 byte errors per frame</dd>
+          <dt>Error Correction</dt>
+          <dd>Up to 8 byte errors per frame</dd>
+        </dl>
+
+        <h4>Synchronization</h4>
+        <dl class="spec-list">
+          <dt>Warmup Tone</dt>
+          <dd>200ms steady tone for audio path wake-up</dd>
+
+          <dt>Chirp Sweep</dt>
+          <dd>800ms up-down frequency sweep (600-2600 Hz)</dd>
+
+          <dt>Detection Method</dt>
+          <dd>Matched filter cross-correlation (robust to noise)</dd>
+
+          <dt>Calibration</dt>
+          <dd>4 tones repeated 2x for level calibration</dd>
+
+          <dt>Sync Pattern</dt>
+          <dd>8-symbol alternating pattern</dd>
         </dl>
 
         <h4>Encryption (Optional)</h4>
@@ -191,9 +239,6 @@ export function Help() {
           <dt>Maximum Payload</dt>
           <dd>100 KB</dd>
 
-          <dt>Preamble</dt>
-          <dd>Warmup (200ms) + Chirp (800ms) + Calibration (2x) + Sync (8 symbols)</dd>
-
           <dt>Protocol Version</dt>
           <dd>2.0 (Compact)</dd>
         </dl>
@@ -209,10 +254,7 @@ export function Help() {
           <dd>{formatBuildTime()}</dd>
 
           <dt>Audio Mode</dt>
-          <dd>{mode === 'phone' ? 'Phone (600-3050 Hz)' : 'Wideband (1800-5700 Hz)'}</dd>
-
-          <dt>FEC Mode</dt>
-          <dd>{fecMode === 'normal' ? 'Normal (16 parity bytes)' : 'Robust (32 parity bytes)'}</dd>
+          <dd>{mode === 'phone' ? 'Phone (800-2300 Hz, 4 tones)' : 'Wideband (1800-5700 Hz, 16 tones)'}</dd>
 
           <dt>Source Code</dt>
           <dd><a href="https://github.com/shayanb/nedagram" target="_blank" rel="noopener noreferrer">github.com/shayanb/nedagram</a></dd>

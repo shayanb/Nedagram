@@ -97,3 +97,39 @@ function writeString(view: DataView, offset: number, str: string): void {
     view.setUint8(offset + i, str.charCodeAt(i));
   }
 }
+
+/**
+ * Parse an audio file (WAV, MP3, M4A, etc.) and return Float32Array samples
+ * Uses Web Audio API for broad format support
+ */
+export async function parseAudioFile(file: File): Promise<{ samples: Float32Array; sampleRate: number }> {
+  const arrayBuffer = await file.arrayBuffer();
+
+  // Create offline audio context for decoding
+  const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+
+  try {
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    // Get mono samples (mix channels if stereo)
+    let samples: Float32Array;
+    if (audioBuffer.numberOfChannels === 1) {
+      samples = audioBuffer.getChannelData(0);
+    } else {
+      // Mix down to mono
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      samples = new Float32Array(left.length);
+      for (let i = 0; i < left.length; i++) {
+        samples[i] = (left[i] + right[i]) / 2;
+      }
+    }
+
+    return {
+      samples,
+      sampleRate: audioBuffer.sampleRate,
+    };
+  } finally {
+    await audioContext.close();
+  }
+}

@@ -8,6 +8,7 @@ import { AUDIO, LIMITS } from '../utils/constants';
 import { tryCompress } from './compress';
 import { packetize } from './frame';
 import { encodeWithFEC, calculateEncodedSize } from './fec';
+import { interleave, calculateInterleaverDepth } from './interleave';
 import { generateTransmission, calculateDuration } from './modulate';
 import { sha256Hex } from '../lib/sha256';
 import { encrypt, ENCRYPTION_OVERHEAD } from '../lib/crypto';
@@ -132,8 +133,17 @@ export async function encodeBytes(
   // Add FEC to all frames
   const { encodedHeader, encodedDataFrames } = encodeWithFEC(headerFrame, dataFrames);
 
+  // Interleave each frame for burst error protection
+  // This spreads adjacent bytes across the frame, so burst errors
+  // (consecutive corrupted symbols) are spread out and more likely
+  // to be correctable by RS decoding
+  const interleavedHeader = interleave(encodedHeader, calculateInterleaverDepth(encodedHeader.length));
+  const interleavedDataFrames = encodedDataFrames.map(frame =>
+    interleave(frame, calculateInterleaverDepth(frame.length))
+  );
+
   // Combine all encoded frames (header first, then data)
-  const allEncodedFrames = [encodedHeader, ...encodedDataFrames];
+  const allEncodedFrames = [interleavedHeader, ...interleavedDataFrames];
 
   // Calculate total encoded bytes
   const totalEncodedBytes = allEncodedFrames.reduce((sum, f) => sum + f.length, 0);

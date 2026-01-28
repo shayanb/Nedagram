@@ -51,10 +51,8 @@ Nedagram was built to help share text data when sending files or copy-paste isn'
 - **Two Audio Modes**
   - **Phone Mode** - Works over standard phone calls (300-3400 Hz)
   - **Wideband Mode** - Faster transmission for direct device-to-device or HD Voice
-- **Two FEC Modes**
-  - **Normal FEC** - Standard error correction (16 parity bytes)
-  - **Robust FEC** - Enhanced for noisy environments (32 parity bytes)
-- **Auto-Detection** - Receiver automatically detects transmission mode and FEC settings
+- **Error Correction** - Reed-Solomon FEC with 16 parity bytes per frame
+- **Auto-Detection** - Receiver automatically detects transmission mode
 - **Compression** - DEFLATE compression reduces transmission time
 - **Integrity Verification** - SHA-256 checksum for sender/receiver verification
 - **QR Code Fallback** - For small payloads (< 2KB)
@@ -81,11 +79,10 @@ Share configuration files, complex passwords, or long URLs via:
 1. Open [Nedagram](https://nedagram.com) on the sending device
 2. Paste your text or upload a file
 3. Select **Phone** (for calls) or **Wideband** (for direct transfer)
-4. Select **Normal FEC** or **Robust FEC** (for noisy environments)
-5. Optionally enable **Encrypt** and enter a password
-6. Click **Generate Audio**
-7. Play the audio near the receiving device
-8. Share the SHA-256 checksum (and password if encrypted) with the receiver
+4. Optionally enable **Encrypt** and enter a password
+5. Click **Generate Audio**
+6. Play the audio near the receiving device
+7. Share the SHA-256 checksum (and password if encrypted) with the receiver
 
 ### Receiving
 1. Open [Nedagram](https://nedagram.com) on the receiving device
@@ -98,15 +95,18 @@ Share configuration files, complex passwords, or long URLs via:
 
 ## Technical Specifications
 
-### Phone Mode (300-3400 Hz)
+### Phone Mode (Optimized for GSM/Phone Calls)
 | Parameter | Value |
 |-----------|-------|
-| Modulation | 8-MFSK (3 bits/symbol) |
-| Frequency Range | 600 - 3050 Hz |
-| Symbol Duration | 50ms + 8ms guard |
-| Effective Bitrate | ~30-35 bps |
+| Modulation | 4-MFSK (2 bits/symbol) |
+| Tone Frequencies | 800, 1300, 1800, 2300 Hz |
+| Tone Spacing | 500 Hz (wide for codec tolerance) |
+| Symbol Duration | 50ms + 12ms guard |
+| Effective Bitrate | ~20-25 bps |
+| Synchronization | Chirp matched filter detection |
+| Burst Protection | Block interleaving enabled |
 
-### Wideband Mode (HD Voice)
+### Wideband Mode (HD Voice / Direct)
 | Parameter | Value |
 |-----------|-------|
 | Modulation | 16-MFSK (4 bits/symbol) |
@@ -115,10 +115,19 @@ Share configuration files, complex passwords, or long URLs via:
 | Effective Bitrate | ~50-60 bps |
 
 ### Error Correction (Reed-Solomon)
-| Mode | Parity Bytes | Error Correction |
-|------|--------------|------------------|
-| Normal FEC | 16 bytes | Up to 8 errors/frame |
-| Robust FEC | 32 bytes | Up to 16 errors/frame |
+| Parameter | Value |
+|-----------|-------|
+| Parity Bytes | 16 per frame |
+| Error Correction | Up to 8 bytes/frame |
+
+### Synchronization
+| Component | Description |
+|-----------|-------------|
+| Warmup Tone | 200ms steady tone for audio path wake-up |
+| Chirp Sweep | 800ms up-down frequency sweep (600-2600 Hz) |
+| Matched Filter | Cross-correlation detection for robust sync |
+| Calibration | 4 tones repeated 2x for level calibration |
+| Sync Pattern | 8-symbol alternating pattern |
 
 ### Encryption (Optional)
 | Parameter | Value |
@@ -136,11 +145,11 @@ Share configuration files, complex passwords, or long URLs via:
 
 | Payload Size | Phone Mode | Wideband Mode |
 |--------------|------------|---------------|
-| 100 bytes | ~30 sec | ~20 sec |
-| 1 KB | ~4 min | ~2.5 min |
-| 10 KB | ~40 min | ~25 min |
+| 100 bytes | ~45 sec | ~20 sec |
+| 1 KB | ~6 min | ~2.5 min |
+| 10 KB | ~55 min | ~25 min |
 
-*Times are approximate and include preamble, headers, and FEC overhead.*
+*Times are approximate and include preamble, headers, and FEC overhead. Phone mode is optimized for reliability over speed.*
 
 ## Tips for Best Results
 
@@ -148,8 +157,7 @@ Share configuration files, complex passwords, or long URLs via:
 2. **Volume at 70-80%** - Too loud causes distortion, too quiet loses signal
 3. **Distance 0.5-1m** - Optimal range for speaker-to-microphone
 4. **Keep devices steady** - Movement during transmission can cause errors
-5. **Use Robust FEC** - In noisy conditions or over phone calls
-6. **Verify checksum** - Always compare SHA-256 to confirm integrity
+5. **Verify checksum** - Always compare SHA-256 to confirm integrity
 
 ## Offline Distribution
 
@@ -252,6 +260,8 @@ MIT License - See [LICENSE](LICENSE) for details.
 ## Disclaimer
 
 This software is provided "as is" for educational and research purposes. See [DISCLAIMER.md](DISCLAIMER.md) for full terms.
+
+**Note:** This code has not been audited. The audio encoding/decoding implementation is based on established research papers and popular codebases in the field, developed with AI assistance and guided by the author(s). Use at your own risk for sensitive applications.
 
 ## Acknowledgments
 

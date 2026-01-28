@@ -21,6 +21,15 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mode-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  width: 100%;
+  margin-top: calc(-1 * var(--space-xs));
+  padding-inline-start: 45px;
 }
 
 .setting-label {

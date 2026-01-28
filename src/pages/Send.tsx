@@ -10,7 +10,7 @@ import { ChecksumDisplay } from '../components/ChecksumDisplay';
 import { encodeString, checkPayloadSize, estimateEncode, type EncodeResult } from '../encode';
 import { playAudio, stopAudio, pauseAudio, isPlaying, getCurrentTime } from '../audio/player';
 import { downloadWAV } from '../lib/wav';
-import { LIMITS, getAudioMode, setAudioMode, getFECMode, setFECMode, type AudioMode, type FECMode } from '../utils/constants';
+import { LIMITS, getAudioMode, setAudioMode, type AudioMode } from '../utils/constants';
 import { formatBytes, formatDuration, stringToBytes } from '../utils/helpers';
 import { calculatePasswordStrength, getPasswordStrengthLabel } from '../lib/crypto';
 import './Send.css';
@@ -22,7 +22,6 @@ const encodeResult = signal<EncodeResult | null>(null);
 const errorMessage = signal<string | null>(null);
 const playbackProgress = signal<number>(0);
 const audioMode = signal<AudioMode>(getAudioMode());
-const fecMode = signal<FECMode>(getFECMode());
 const isResultStale = signal(false);
 
 export function Send() {
@@ -159,14 +158,6 @@ export function Send() {
     }
   }, []);
 
-  const handleFECModeChange = useCallback((mode: FECMode) => {
-    setFECMode(mode);
-    fecMode.value = mode;
-    // Mark result as stale when FEC mode changes
-    if (encodeResult.value) {
-      isResultStale.value = true;
-    }
-  }, []);
 
   return (
     <div class="send-page">
@@ -191,27 +182,11 @@ export function Send() {
               Wideband
             </button>
           </div>
+          {audioMode.value === 'wideband' && (
+            <span class="mode-hint">{t.send.widebandHint}</span>
+          )}
         </div>
 
-        <div class="setting-group">
-          <span class="setting-label">FEC</span>
-          <div class="mode-toggle compact">
-            <button
-              class={`mode-btn ${fecMode.value === 'normal' ? 'active' : ''}`}
-              onClick={() => handleFECModeChange('normal')}
-              title="Normal error correction"
-            >
-              Normal
-            </button>
-            <button
-              class={`mode-btn ${fecMode.value === 'robust' ? 'active' : ''}`}
-              onClick={() => handleFECModeChange('robust')}
-              title="Robust for noisy environments"
-            >
-              Robust
-            </button>
-          </div>
-        </div>
       </div>
 
       <div class="input-section">

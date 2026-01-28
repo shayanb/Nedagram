@@ -1,0 +1,180 @@
+.debug-log {
+  position: fixed;
+  bottom: 70px; /* Above the navbar */
+  right: var(--space-md);
+  max-width: 400px;
+  z-index: 50;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column-reverse; /* Collapse upward */
+}
+
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 4px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s ease;
+  font-size: 11px;
+  order: 1; /* Toggle stays at bottom when collapsed */
+  opacity: 0.5;
+}
+
+.debug-toggle:hover {
+  opacity: 1;
+  border-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.debug-toggle.active {
+  opacity: 1;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.debug-toggle .chevron {
+  transition: transform 0.2s ease;
+}
+
+.debug-toggle .chevron.up {
+  transform: rotate(180deg);
+}
+
+.debug-entries {
+  margin-bottom: var(--space-xs); /* Above the toggle */
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  order: 0; /* Entries appear above toggle */
+}
+
+.debug-log.expanded .debug-entries {
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs);
+}
+
+/* Hide entries when collapsed */
+.debug-log:not(.expanded) .debug-entries {
+  display: none;
+}
+
+.debug-entry {
+  display: flex;
+  gap: var(--space-xs);
+  padding: 3px 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  opacity: 1;
+  transition: opacity 2s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.debug-entry.fading {
+  opacity: 0;
+}
+
+.debug-entry.warn {
+  border-color: var(--color-warning);
+  background: rgba(196, 163, 94, 0.1);
+}
+
+.debug-entry.error {
+  border-color: var(--color-error);
+  background: rgba(196, 94, 94, 0.1);
+}
+
+.debug-time {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.debug-message {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-log.expanded .debug-entry {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.debug-empty {
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--space-sm);
+}
+
+.debug-actions {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.debug-clear,
+.debug-stop {
+  flex: 1;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.debug-clear:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.debug-stop:hover {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+/* RTL adjustments */
+[dir="rtl"] .debug-log {
+  right: auto;
+  left: var(--space-md);
+}
+
+[dir="rtl"] .debug-toggle {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+[dir="rtl"] .debug-log:not(.expanded) .debug-entries {
+  align-items: flex-start;
+}
+
+/* Mobile adjustments */
+@media (max-width: 480px) {
+  .debug-log {
+    right: var(--space-sm);
+    left: var(--space-sm);
+    max-width: none;
+    bottom: 80px; /* Ensure space for navbar on mobile */
+  }
+
+  .debug-log.expanded .debug-entries {
+    max-height: 200px;
+  }
+}

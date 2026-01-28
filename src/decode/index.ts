@@ -1,19 +1,22 @@
 /**
  * Main decoding pipeline
  *
- * Flow: Audio → Multi-phase symbol extraction → Find sync → Decode
+ * Flow: Audio → Chirp detection → Symbol extraction → Sync → Decode
  *
- * Key insight: We don't know where symbol boundaries are when recording starts.
- * Solution: Try multiple phase offsets and find the one that produces valid patterns.
+ * Phase 2 improvement: Uses matched filter chirp detection for robust sync.
+ * The chirp detector finds the preamble even in noisy conditions, then
+ * precise timing is used to align symbol extraction.
  */
 import { signal } from '@preact/signals';
-import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, type AudioMode } from '../utils/constants';
+import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, getAudioMode, type AudioMode } from '../utils/constants';
 import { bytesToString } from '../utils/helpers';
 import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
-import { decodeDataFEC, autoDetectAndDecodeHeader, autoDetectAndDecodeHeaderWithRedundancy, getHeaderSizes } from './fec';
+import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize } from './fec';
 import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } from './deframe';
 import { processPayload, type ProcessResult } from './decompress';
+import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
 import { sha256Hex } from '../lib/sha256';
+import { ChirpDetector } from '../lib/chirp';
 
 export type DecodeState =
   | 'idle'
@@ -88,13 +91,17 @@ export class Decoder {
   private bestPhase = -1;
   private syncFoundAt = -1;
 
-  // Chirp detection
+  // Chirp detection (Phase 2: matched filter)
+  private chirpDetector: ChirpDetector;
   private chirpDetected = false;
+  private chirpEndSample = -1;  // Sample index where chirp ends (calibration starts)
   private lastPeakFreq = 0;
   private chirpSweepCount = 0;
 
   // Audio mode auto-detection
   private detectedAudioMode: AudioMode | null = null;
+  private symbolExtractionMode: AudioMode | null = null; // Track which mode symbols were extracted with
+  private lastExtractedSamplePos = 0; // Track extraction position for re-extraction
 
   // Encryption
   private password: string | null = null;
@@ -102,7 +109,9 @@ export class Decoder {
 
   // Header failure detection
   private consecutiveHeaderFailures = 0;
-  private static readonly MAX_HEADER_FAILURES = 3;  // After this many failures, warn user
+  private static readonly MAX_HEADER_FAILURES = 5;  // After this many failures, warn user
+  private static readonly FATAL_HEADER_FAILURES = 15; // After this many, give up and show error
+  private modeRetryAttempted = false; // Track if we've tried the other mode
 
   public progress = signal<DecodeProgress>({
     state: 'idle',
@@ -125,8 +134,12 @@ export class Decoder {
     this.phaseOffset = Math.floor(this.symbolSamples / NUM_PHASES);
     this.frameCollector = new FrameCollector();
 
-    // Buffer for ~10 seconds of audio
-    this.sampleBuffer = new Float32Array(10 * sampleRate);
+    // Buffer for ~60 seconds of audio (handles longer transmissions)
+    // 60 sec * 48000 Hz = 2.88M samples = ~11.5 MB memory
+    this.sampleBuffer = new Float32Array(60 * sampleRate);
+
+    // Initialize chirp detector for robust preamble detection
+    this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
 
     // Initialize phase arrays
     for (let p = 0; p < NUM_PHASES; p++) {
@@ -222,6 +235,8 @@ export class Decoder {
     this.framesAttempted = new Set();
     this.headerRepeated = false;
     this.chirpDetected = false;
+    this.chirpEndSample = -1;
+    this.chirpDetector.reset();
     this.lastPeakFreq = 0;
     this.chirpSweepCount = 0;
     this.detectedAudioMode = null;
@@ -266,9 +281,27 @@ export class Decoder {
       return;
     }
 
-    // Detect chirp (frequency sweep) in the preamble
+    // Phase 2: Use matched filter chirp detection for robust sync
     if (!this.chirpDetected && this.state === 'detecting_preamble') {
-      this.detectChirp(samples);
+      const chirpResult = this.chirpDetector.addSamples(samples);
+      if (chirpResult.detected) {
+        this.chirpDetected = true;
+        this.chirpEndSample = chirpResult.chirpEndSample;
+
+        // Set mode from chirp detection BEFORE symbol extraction continues
+        // This ensures symbols get extracted with correct timing for the detected mode
+        if (chirpResult.mode) {
+          console.log('[Decoder] Chirp detected mode:', chirpResult.mode, 'Confidence:', chirpResult.confidence.toFixed(3));
+          this.detectedAudioMode = chirpResult.mode;
+          setAudioMode(chirpResult.mode);
+          this.updateSymbolTiming(); // This clears wrongly-extracted symbols if mode changed
+        } else {
+          console.log('[Decoder] Chirp detected via matched filter! Confidence:', chirpResult.confidence.toFixed(3));
+        }
+        this.lastDebugInfo = `Chirp detected (${chirpResult.mode || 'unknown'}, ${(chirpResult.confidence * 100).toFixed(0)}% confidence)`;
+      } else if (chirpResult.confidence > 0.15) {
+        this.lastDebugInfo = `Searching for chirp... (${(chirpResult.confidence * 100).toFixed(0)}% match)`;
+      }
     }
 
     // Extract symbols for all phases
@@ -276,7 +309,12 @@ export class Decoder {
 
     // Process based on state
     if (this.bestPhase < 0) {
-      this.findBestPhase();
+      // If chirp is detected, use precise timing; otherwise fall back to pattern search
+      if (this.chirpDetected && this.chirpEndSample > 0) {
+        this.findBestPhaseFromChirp();
+      } else {
+        this.findBestPhase();
+      }
     } else if (this.state === 'receiving_header') {
       this.processHeader();
     } else if (this.state === 'receiving_data') {
@@ -287,8 +325,22 @@ export class Decoder {
   }
 
   private extractSymbolsAllPhases(): void {
-    // For each phase, extract any new complete symbols
-    for (let phase = 0; phase < NUM_PHASES; phase++) {
+    // Track which mode we're extracting symbols for
+    if (!this.symbolExtractionMode) {
+      this.symbolExtractionMode = getAudioMode();
+    }
+
+    // Calculate the oldest valid sample position (buffer is circular)
+    // We can only reliably read samples that haven't been overwritten
+    const bufferLen = this.sampleBuffer.length;
+    const oldestValidSample = this.totalSamplesReceived > bufferLen
+      ? this.totalSamplesReceived - bufferLen
+      : 0;
+
+    // Once we've found the best phase, only extract for that phase to save computation
+    const phasesToProcess = this.bestPhase >= 0 ? [this.bestPhase] : Array.from({ length: NUM_PHASES }, (_, i) => i);
+
+    for (const phase of phasesToProcess) {
       const offset = phase * this.phaseOffset;
       const symbolsExpected = Math.floor((this.totalSamplesReceived - offset) / this.symbolSamples);
 
@@ -302,6 +354,17 @@ export class Decoder {
 
         // Check if we have enough samples
         if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+        // CRITICAL: Check if the data is still valid (not overwritten by buffer wrap)
+        if (analysisStart < oldestValidSample) {
+          // This symbol's data has been overwritten - we've fallen behind!
+          // This should not happen in normal operation, but if it does,
+          // push a placeholder and log a warning
+          console.warn('[Decoder] Buffer overflow! Symbol', symbolIndex, 'data was overwritten. Behind by',
+            oldestValidSample - analysisStart, 'samples');
+          this.phaseSymbols[phase].push(0); // Placeholder - will likely cause decode failure
+          continue;
+        }
 
         const symbolSamples = this.getBufferSamples(analysisStart, analysisLength);
         const tone = detectSymbolWithThreshold(symbolSamples, this.sampleRate, 0.10);
@@ -331,6 +394,110 @@ export class Decoder {
     }
 
     return result;
+  }
+
+  /**
+   * Phase 2: Use precise chirp timing to find symbol boundaries
+   *
+   * When chirp is detected via matched filter, we know exactly where it ends.
+   * From there, we can calculate where calibration and sync start, giving us
+   * precise symbol alignment without needing to search through multiple phases.
+   */
+  private findBestPhaseFromChirp(): void {
+    if (this.chirpEndSample <= 0) return;
+
+    // After chirp: warmup tone was before chirp, now we have calibration tones
+    // Structure: [warmup][chirp][calibration x2][sync x8][header][data...]
+    //                         ^-- chirpEndSample points here
+
+    const calibrationRepeats = AUDIO.CALIBRATION_REPEATS || 2;
+    const calibrationSymbols = AUDIO.CALIBRATION_TONES.length * calibrationRepeats;
+    const syncSymbols = AUDIO.SYNC_PATTERN.length;
+
+    // Calculate where header starts (after calibration + sync)
+    const symbolDurationSamples = this.symbolSamples;
+    const headerStartSample = this.chirpEndSample +
+      (calibrationSymbols + syncSymbols) * symbolDurationSamples;
+
+    // Calculate which phase aligns best with this timing
+    const sampleOffset = headerStartSample % symbolDurationSamples;
+    const bestPhaseEstimate = Math.round(sampleOffset / this.phaseOffset) % NUM_PHASES;
+
+    // Verify by checking if we can detect calibration/sync pattern at this alignment
+    const symbols = this.phaseSymbols[bestPhaseEstimate];
+
+    // Calculate which symbol index corresponds to the start of calibration
+    const calibStartSymbolIndex = Math.floor(this.chirpEndSample / symbolDurationSamples);
+
+    // Check if we have enough symbols
+    if (symbols.length < calibStartSymbolIndex + calibrationSymbols + syncSymbols + 10) {
+      this.lastDebugInfo = `Chirp found, waiting for symbols... (${symbols.length}/${calibStartSymbolIndex + 20})`;
+      return;
+    }
+
+    // Try to match calibration + sync pattern starting from the calculated position
+    // Try both phone and wideband modes
+    const modes: { mode: AudioMode; calib: number[]; sync: number[]; maxTone: number }[] = [
+      {
+        mode: 'phone',
+        calib: PHONE_MODE.CALIBRATION_TONES,
+        sync: PHONE_MODE.SYNC_PATTERN,
+        maxTone: PHONE_MODE.NUM_TONES - 1,
+      },
+      {
+        mode: 'wideband',
+        calib: WIDEBAND_MODE.CALIBRATION_TONES,
+        sync: WIDEBAND_MODE.SYNC_PATTERN,
+        maxTone: WIDEBAND_MODE.NUM_TONES - 1,
+      },
+    ];
+
+    // Search in a small window around the estimated position (±3 symbols)
+    for (let offset = -3; offset <= 3; offset++) {
+      const startIdx = calibStartSymbolIndex + offset;
+      if (startIdx < 0 || startIdx + calibrationSymbols + syncSymbols >= symbols.length) continue;
+
+      for (const { mode, calib, sync, maxTone } of modes) {
+        // Build expected pattern: calibration repeated + sync
+        const fullCalib: number[] = [];
+        for (let r = 0; r < calibrationRepeats; r++) {
+          fullCalib.push(...calib);
+        }
+        const fullPattern = [...fullCalib, ...sync];
+
+        // Check pattern match
+        let matchCount = 0;
+        const tolerance = maxTone > 10 ? 2 : 1;
+
+        for (let i = 0; i < fullPattern.length; i++) {
+          const expected = fullPattern[i];
+          const actual = symbols[startIdx + i];
+          if (actual === expected || Math.abs(actual - expected) <= tolerance) {
+            matchCount++;
+          }
+        }
+
+        const matchRatio = matchCount / fullPattern.length;
+
+        if (matchRatio >= 0.7) {  // 70% match threshold
+          this.bestPhase = bestPhaseEstimate;
+          this.syncFoundAt = startIdx + fullPattern.length;
+          this.detectedAudioMode = mode;
+          this.state = 'receiving_header';
+
+          setAudioMode(mode);
+          this.updateSymbolTiming();
+
+          console.log('[Decoder] Chirp-aligned sync found! Mode:', mode,
+                      'Phase:', bestPhaseEstimate, 'Match:', (matchRatio * 100).toFixed(0) + '%');
+          this.lastDebugInfo = `Sync found via chirp (${mode}, ${(matchRatio * 100).toFixed(0)}% match)`;
+          return;
+        }
+      }
+    }
+
+    // If chirp-based alignment didn't find pattern, fall back to exhaustive search
+    this.lastDebugInfo = 'Chirp found, searching for sync pattern...';
   }
 
   private findBestPhase(): void {
@@ -443,12 +610,42 @@ export class Decoder {
 
   /**
    * Update symbol timing after mode detection
+   * If mode changed from what symbols were extracted with, clear and re-extract
    */
   private updateSymbolTiming(): void {
+    const oldMode = this.symbolExtractionMode;
+    const newMode = this.detectedAudioMode;
+
     this.symbolSamples = Math.floor((AUDIO.SYMBOL_DURATION_MS / 1000) * this.sampleRate);
     this.guardSamples = Math.floor((AUDIO.GUARD_INTERVAL_MS / 1000) * this.sampleRate);
     this.phaseOffset = Math.floor(this.symbolSamples / NUM_PHASES);
-    console.log('[Decoder] Updated timing for', this.detectedAudioMode, '- symbol:', this.symbolSamples, 'samples');
+
+    console.log('[Decoder] Updated timing for', newMode, '- symbol:', this.symbolSamples, 'samples');
+
+    // If mode changed, we need to re-extract symbols with new timing
+    if (oldMode && oldMode !== newMode) {
+      console.log('[Decoder] Mode changed from', oldMode, 'to', newMode, '- re-extracting symbols');
+      this.clearSymbolsForReextraction();
+    }
+
+    this.symbolExtractionMode = newMode;
+  }
+
+  /**
+   * Clear symbols and reset for re-extraction with new timing
+   */
+  private clearSymbolsForReextraction(): void {
+    // Clear all phase symbol arrays
+    for (let p = 0; p < NUM_PHASES; p++) {
+      this.phaseSymbols[p] = [];
+    }
+    // Reset detection state
+    this.bestPhase = -1;
+    this.syncFoundAt = -1;
+    this.state = 'detecting_preamble';
+    // Reset extraction mode so next extraction uses current timing
+    this.symbolExtractionMode = null;
+    // Keep chirp detection state as the chirp position is still valid
   }
 
   /**
@@ -471,19 +668,24 @@ export class Decoder {
   /**
    * Sync pattern matching for specific mode
    * Sync: [low, high, low, high, ...] alternating pattern
+   * Made stricter to avoid false positives
    */
   private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8): boolean {
-    const tolerance = maxTone > 10 ? 2 : 1;
-    const minMatch = Math.max(4, syncLen - 2); // Need at least 6 of 8 to match
+    // Stricter matching: require 7 out of 8 for reliability
+    const minMatch = syncLen - 1;
 
     let matches = 0;
     for (let i = 0; i < Math.min(syncLen, symbols.length - startIndex); i++) {
       const sym = symbols[startIndex + i];
       const isEven = i % 2 === 0;
 
-      // Even positions should be low (0), odd positions should be high (maxTone)
-      if (isEven && sym <= tolerance) matches++;
-      if (!isEven && sym >= maxTone - tolerance) matches++;
+      // Even positions should be exactly 0, odd positions should be exactly maxTone
+      // Allow small tolerance only for wideband (more tones = more potential drift)
+      if (isEven) {
+        if (sym === 0) matches++;
+      } else {
+        if (sym === maxTone || (maxTone > 10 && sym >= maxTone - 1)) matches++;
+      }
     }
 
     return matches >= minMatch;
@@ -518,10 +720,10 @@ export class Decoder {
 
   /**
    * Calculate number of symbols needed for given bytes
-   * Phone mode: 3-bit symbols, Wideband: 4-bit symbols
+   * Uses BITS_PER_SYMBOL from audio settings
    */
   private calculateSymbolsForBytes(byteCount: number): number {
-    const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+    const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
     return Math.ceil((byteCount * 8) / bitsPerSymbol);
   }
 
@@ -531,40 +733,41 @@ export class Decoder {
   private processHeader(): void {
     const symbols = this.phaseSymbols[this.bestPhase];
 
-    // Get header sizes for both FEC modes
-    const headerSizes = getHeaderSizes();
-    const headerSymbolsNormal = this.calculateSymbolsForBytes(headerSizes.normal); // 28 bytes
-    const headerSymbolsRobust = this.calculateSymbolsForBytes(headerSizes.robust); // 44 bytes
+    // Get header size (12 + 16 = 28 bytes)
+    const headerBytes = getHeaderSize();
+    const headerSymbols = this.calculateSymbolsForBytes(headerBytes);
 
     const symbolsAfterSync = symbols.length - this.syncFoundAt;
 
-    // Wait for enough symbols for the larger (robust) size to enable auto-detection
-    if (symbolsAfterSync < headerSymbolsRobust) {
-      this.lastDebugInfo = `Header: ${symbolsAfterSync}/${headerSymbolsRobust} symbols (auto-detect)`;
+    // Wait for enough symbols
+    if (symbolsAfterSync < headerSymbols) {
+      this.lastDebugInfo = `Header: ${symbolsAfterSync}/${headerSymbols} symbols`;
       return;
     }
 
-    console.log('[Decoder] Got enough symbols for header auto-detection...');
+    console.log('[Decoder] Got enough symbols for header...');
 
-    // Extract symbols for both sizes
+    // Extract header symbols
     const headerStart = this.syncFoundAt;
-    const symbolsNormal = symbols.slice(headerStart, headerStart + headerSymbolsNormal);
-    const symbolsRobust = symbols.slice(headerStart, headerStart + headerSymbolsRobust);
+    const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
 
-    console.log('[Decoder] Header symbols (first 20):', symbolsNormal.slice(0, 20));
+    console.log('[Decoder] Header symbols (first 20):', headerSymbolsArr.slice(0, 20));
 
-    // Convert to bytes for both sizes
-    const bytesNormal = this.symbolsToBytes(symbolsNormal, headerSizes.normal);
-    const bytesRobust = this.symbolsToBytes(symbolsRobust, headerSizes.robust);
+    // Convert to bytes
+    const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
 
-    console.log('[Decoder] Header bytes normal (first 10):', Array.from(bytesNormal.slice(0, 10)));
+    // Deinterleave bytes (reverse of encoder interleaving)
+    const bytes = deinterleave(
+      bytesRaw,
+      calculateInterleaverDepth(headerBytes),
+      headerBytes
+    );
+
+    console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
     console.log('[Decoder] Expected: [78, 49, ...] = "N1" magic');
 
-    // Try auto-detection with single header first
-    let decodeResult = autoDetectAndDecodeHeader(bytesNormal, bytesRobust);
-    let detectedMode = decodeResult.detectedMode;
-    const headerSymbols = detectedMode === 'normal' ? headerSymbolsNormal : headerSymbolsRobust;
-    const headerBytes = detectedMode === 'normal' ? headerSizes.normal : headerSizes.robust;
+    // Try to decode header
+    let decodeResult = decodeHeaderFEC(bytes);
 
     if (decodeResult.success) {
       const header = parseHeaderFrame(decodeResult.data);
@@ -575,23 +778,23 @@ export class Decoder {
         this.headerRepeated = header.totalFrames > 1;
 
         if (this.headerRepeated && symbolsAfterSync >= headerSymbols * 2) {
-          // Try second copy for better reliability with detected mode
+          // Try second copy for better reliability
           const symbols2Start = headerStart + headerSymbols;
-          const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
-          const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-          const bytes2Normal = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-          const bytes2Robust = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
-
-          const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
-            bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
+          const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+          const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+          const bytes2 = deinterleave(
+            bytes2Raw,
+            calculateInterleaverDepth(headerBytes),
+            headerBytes
           );
+
+          const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
 
           if (decodeResult2.success) {
             const header2 = parseHeaderFrame(decodeResult2.data);
             if (header2 && header2.crcValid) {
               console.log('[Decoder] Used redundant header copy');
               decodeResult = decodeResult2;
-              detectedMode = decodeResult2.detectedMode;
             }
           }
         }
@@ -602,28 +805,28 @@ export class Decoder {
         this.consecutiveHeaderFailures = 0;  // Reset failure counter on success
 
         this.state = 'receiving_data';
-        this.lastDebugInfo = `Header OK (${detectedMode} FEC)! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
-        console.log('[Decoder] Header valid! Mode:', detectedMode, 'Expecting', header.totalFrames, 'frames');
+        this.lastDebugInfo = `Header OK! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
+        console.log('[Decoder] Header valid! Expecting', header.totalFrames, 'frames');
         return;
       } else {
         const reason = header ? 'CRC invalid' : 'Parse failed';
         console.log('[Decoder] Header invalid:', reason);
       }
     } else {
-      console.log('[Decoder] Header FEC auto-detect failed');
+      console.log('[Decoder] Header FEC decode failed');
 
       // If we have enough for second copy, try with redundancy
-      const headerSymbolsMax = headerSymbolsRobust;
-      if (symbolsAfterSync >= headerSymbolsMax * 2) {
-        const symbols2Start = headerStart + headerSymbolsMax;
-        const symbols2Normal = symbols.slice(symbols2Start, symbols2Start + headerSymbolsNormal);
-        const symbols2Robust = symbols.slice(symbols2Start, symbols2Start + headerSymbolsRobust);
-        const bytes2Normal = this.symbolsToBytes(symbols2Normal, headerSizes.normal);
-        const bytes2Robust = this.symbolsToBytes(symbols2Robust, headerSizes.robust);
-
-        const decodeResult2 = autoDetectAndDecodeHeaderWithRedundancy(
-          bytesNormal, bytesRobust, bytes2Normal, bytes2Robust
+      if (symbolsAfterSync >= headerSymbols * 2) {
+        const symbols2Start = headerStart + headerSymbols;
+        const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+        const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+        const bytes2 = deinterleave(
+          bytes2Raw,
+          calculateInterleaverDepth(headerBytes),
+          headerBytes
         );
+
+        const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
 
         if (decodeResult2.success) {
           const header = parseHeaderFrame(decodeResult2.data);
@@ -634,8 +837,8 @@ export class Decoder {
             this.totalErrorsFixed += Math.max(0, decodeResult2.correctedErrors);
 
             this.state = 'receiving_data';
-            this.lastDebugInfo = `Header OK (${decodeResult2.detectedMode} FEC, redundant)! Frames: ${header.totalFrames}`;
-            console.log('[Decoder] Header valid from redundant copy! Mode:', decodeResult2.detectedMode);
+            this.lastDebugInfo = `Header OK (redundant)! Frames: ${header.totalFrames}`;
+            console.log('[Decoder] Header valid from redundant copy!');
             return;
           }
         }
@@ -645,6 +848,55 @@ export class Decoder {
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;
     console.log('[Decoder] Header failure count:', this.consecutiveHeaderFailures);
+
+    // Fatal failure - too many header decode failures
+    if (this.consecutiveHeaderFailures >= Decoder.FATAL_HEADER_FAILURES) {
+      // If we haven't tried the other mode yet, try switching
+      if (!this.modeRetryAttempted && this.detectedAudioMode) {
+        const currentMode = this.detectedAudioMode;
+        const otherMode: AudioMode = currentMode === 'phone' ? 'wideband' : 'phone';
+        console.log(`[Decoder] Fatal header failures in ${currentMode} mode, trying ${otherMode} mode`);
+
+        this.modeRetryAttempted = true;
+        this.consecutiveHeaderFailures = 0;
+
+        // Switch to other mode
+        setAudioMode(otherMode);
+        this.detectedAudioMode = otherMode;
+        this.symbolExtractionMode = null; // Force re-extraction
+
+        // Reset symbol buffers and detection state
+        this.bestPhase = -1;
+        this.syncFoundAt = -1;
+        for (let p = 0; p < NUM_PHASES; p++) {
+          this.phaseSymbols[p] = [];
+        }
+
+        // Re-initialize chirp detector for new mode
+        this.chirpDetector = new ChirpDetector(this.sampleRate, 0.3);
+        this.chirpDetected = false;
+        this.chirpEndSample = -1;
+        this.state = 'detecting_preamble';
+        this.lastDebugInfo = `Trying ${otherMode} mode...`;
+        this.updateProgress();
+        return;
+      }
+
+      // Already tried both modes or no mode detected - give up
+      const errorMsg = this.modeRetryAttempted
+        ? 'Decoding failed in both modes. Try moving closer or reducing background noise.'
+        : 'Too many header decode failures. Check signal quality and try again.';
+
+      console.error('[Decoder] Fatal: Too many header failures, giving up');
+      this.state = 'error';
+      this.lastDebugInfo = errorMsg;
+      this.updateProgress();
+
+      if (this.onError) {
+        this.onError(new Error(errorMsg));
+      }
+      return;
+    }
 
     if (this.consecutiveHeaderFailures >= Decoder.MAX_HEADER_FAILURES) {
       this.lastDebugInfo = 'Poor signal - try moving closer or reducing noise';
@@ -708,6 +960,13 @@ export class Decoder {
     const framesExpected = this.headerInfo.totalFrames;
     const symbolsAvailable = symbols.length - dataStart;
 
+    // Log progress periodically for long transmissions
+    const framesReceived = this.frameCollector.getReceivedCount();
+    if (framesReceived > 0 && framesReceived % 5 === 0) {
+      const bufferUsage = ((this.totalSamplesReceived % this.sampleBuffer.length) / this.sampleBuffer.length * 100).toFixed(0);
+      console.log(`[Decoder] Progress: ${framesReceived}/${framesExpected} frames, ${symbols.length} symbols, buffer: ${bufferUsage}%`);
+    }
+
     // Calculate symbol offset for each frame
     const frameSymbolOffsets: number[] = [0];
     for (let i = 0; i < framesExpected; i++) {
@@ -746,7 +1005,14 @@ export class Decoder {
       this.framesAttempted.add(f);
 
       const frameSymbolsArr = symbols.slice(frameStart, frameEnd);
-      const frameBytes = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+      const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+
+      // Deinterleave frame bytes (reverse of encoder interleaving)
+      const frameBytes = deinterleave(
+        frameBytesRaw,
+        calculateInterleaverDepth(thisFrameEncodedBytes),
+        thisFrameEncodedBytes
+      );
 
       console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
       console.log('[Decoder] Expected: [68, ...] = "D" magic');
@@ -782,14 +1048,14 @@ export class Decoder {
 
   /**
    * Convert symbols back to bytes
-   * Phone mode: 3-bit symbols, Wideband: 4-bit symbols
+   * Uses BITS_PER_SYMBOL from audio settings
    */
   private symbolsToBytes(symbols: number[], expectedBytes: number): Uint8Array {
-    const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+    const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
     const symbolMask = (1 << bitsPerSymbol) - 1;
 
+    // Special case: 4 bits per symbol = exactly 2 symbols per byte
     if (bitsPerSymbol === 4) {
-      // Wideband: 4 bits per symbol = 2 symbols per byte
       const bytes = new Uint8Array(expectedBytes);
       for (let i = 0; i < expectedBytes; i++) {
         const high = symbols[i * 2] & 0x0F;
@@ -799,7 +1065,7 @@ export class Decoder {
       return bytes;
     }
 
-    // Phone: 3 bits per symbol
+    // General case: bit unpacking for 2 or 3 bits per symbol
     const bytes = new Uint8Array(expectedBytes);
     let bitBuffer = 0;
     let bitsInBuffer = 0;
@@ -920,6 +1186,9 @@ export class Decoder {
     this.framesAttempted = new Set();
     this.headerRepeated = false;
     this.detectedAudioMode = null;
+    this.chirpDetected = false;
+    this.chirpEndSample = -1;
+    this.chirpDetector.reset();
     this.state = 'detecting_preamble';
     this.lastDebugInfo = 'Restarting detection... Play audio again';
     this.updateProgress();

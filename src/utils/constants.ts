@@ -1,29 +1,35 @@
 // Audio mode type
 export type AudioMode = 'phone' | 'wideband';
 
-// Phone-compatible mode: fits within 300-3400 Hz phone bandwidth
+// Phone-compatible mode: optimized for GSM/AMR codecs
+// Based on real-world phone codec analysis:
+// - Sweet spot is 800-2500 Hz (codec preserves this range best)
+// - Need 500Hz+ spacing to avoid tone confusion
+// - Frequencies above 2700Hz are heavily attenuated
 export const PHONE_MODE = {
   SAMPLE_RATE: 48000,
   FALLBACK_SAMPLE_RATE: 44100,
   SYMBOL_DURATION_MS: 50,
-  GUARD_INTERVAL_MS: 8,
-  NUM_TONES: 8,
-  BASE_FREQUENCY: 600,
-  TONE_SPACING: 350,
-  FREQUENCY_JITTER: 15,
-  WARMUP_DURATION_MS: 200,       // Steady tone before chirp
-  CHIRP_DURATION_MS: 800,        // Longer chirp for AGC settling
+  GUARD_INTERVAL_MS: 12,
+  NUM_TONES: 4,               // Reduced from 8 for reliability (2 bits/symbol)
+  BASE_FREQUENCY: 800,        // Start at 800Hz (codec sweet spot)
+  TONE_SPACING: 500,          // Wide spacing to avoid confusion
+  FREQUENCY_JITTER: 20,       // Slightly more tolerance
+  WARMUP_DURATION_MS: 200,
+  CHIRP_DURATION_MS: 800,
   CALIBRATION_DURATION_MS: 150,
-  CALIBRATION_REPEATS: 2,        // Repeat calibration tones
+  CALIBRATION_REPEATS: 2,
   SYNC_DURATION_MS: 100,
-  CHIRP_START_HZ: 500,
-  CHIRP_PEAK_HZ: 3200,
-  CALIBRATION_TONES: [0, 2, 5, 7] as number[],
-  SYNC_PATTERN: [0, 7, 0, 7, 0, 7, 0, 7] as number[],  // 8 symbols for reliability
-  BITS_PER_SYMBOL: 3,
+  CHIRP_START_HZ: 600,        // Chirp within codec range
+  CHIRP_PEAK_HZ: 2600,
+  CALIBRATION_TONES: [0, 1, 2, 3] as number[],  // All 4 tones for calibration
+  SYNC_PATTERN: [0, 3, 0, 3, 0, 3, 0, 3] as number[],  // Low-high alternating
+  BITS_PER_SYMBOL: 2,         // 4 tones = 2 bits per symbol
+  // Tone frequencies: 800, 1300, 1800, 2300 Hz (all in codec sweet spot)
 };
 
 // Wideband mode: for direct device-to-device or HD Voice calls
+// Optimized for phone speaker/mic limitations (poor response above 4kHz)
 export const WIDEBAND_MODE = {
   SAMPLE_RATE: 48000,
   FALLBACK_SAMPLE_RATE: 44100,
@@ -33,13 +39,13 @@ export const WIDEBAND_MODE = {
   BASE_FREQUENCY: 1800,
   TONE_SPACING: 260,
   FREQUENCY_JITTER: 10,
-  WARMUP_DURATION_MS: 200,       // Steady tone before chirp
-  CHIRP_DURATION_MS: 800,        // Longer chirp for AGC settling
+  WARMUP_DURATION_MS: 400,       // Longer warmup for AGC settling (was 200)
+  CHIRP_DURATION_MS: 1200,       // Longer chirp for reliable detection (was 800)
   CALIBRATION_DURATION_MS: 120,
-  CALIBRATION_REPEATS: 2,        // Repeat calibration tones
+  CALIBRATION_REPEATS: 3,        // More calibration repeats for reliability (was 2)
   SYNC_DURATION_MS: 80,
-  CHIRP_START_HZ: 1500,
-  CHIRP_PEAK_HZ: 6000,
+  CHIRP_START_HZ: 1000,          // Lower start for better phone speaker reproduction
+  CHIRP_PEAK_HZ: 4000,           // Lower peak - phone speakers drop off above 4kHz
   CALIBRATION_TONES: [0, 5, 10, 15] as number[],
   SYNC_PATTERN: [0, 15, 0, 15, 0, 15, 0, 15] as number[],  // 8 symbols for reliability
   BITS_PER_SYMBOL: 4,
@@ -77,20 +83,8 @@ export function getAudioMode(): AudioMode {
 // Initialize with phone mode
 setAudioMode('phone');
 
-// FEC mode type
-export type FECMode = 'normal' | 'robust';
-
-// FEC mode settings
-const FEC_NORMAL = {
-  RS_PARITY_SIZE: 16,       // 16 bytes = correct up to 8 errors
-};
-
-const FEC_ROBUST = {
-  RS_PARITY_SIZE: 32,       // 32 bytes = correct up to 16 errors
-};
-
-// Current FEC mode
-let currentFECMode: FECMode = 'normal';
+// FEC settings - single mode with 16 parity bytes
+// Corrects up to 8 byte errors per frame
 
 // Frame structure - optimized for minimal overhead
 export const FRAME = {
@@ -98,8 +92,8 @@ export const FRAME = {
   PAYLOAD_SIZE: 128,        // Max payload per frame
   MIN_PAYLOAD_SIZE: 32,     // Min payload (for small messages)
 
-  // RS parity - default to normal mode
-  RS_PARITY_SIZE: 16,       // Updated dynamically by setFECMode
+  // RS parity - 16 bytes = corrects up to 8 byte errors per frame
+  RS_PARITY_SIZE: 16,
 
   // Header - compact format (12 bytes vs old 25)
   HEADER_SIZE: 12,
@@ -116,19 +110,6 @@ export const FRAME = {
   COMPRESSION_DEFLATE: 1,
 };
 
-export function setFECMode(mode: FECMode): void {
-  currentFECMode = mode;
-  const settings = mode === 'normal' ? FEC_NORMAL : FEC_ROBUST;
-  (FRAME as any).RS_PARITY_SIZE = settings.RS_PARITY_SIZE;
-  console.log('[FEC] Mode set to:', mode, 'Parity bytes:', FRAME.RS_PARITY_SIZE);
-}
-
-export function getFECMode(): FECMode {
-  return currentFECMode;
-}
-
-// Initialize with normal mode
-setFECMode('normal');
 
 // Limits
 export const LIMITS = {
@@ -138,8 +119,8 @@ export const LIMITS = {
 } as const;
 
 // Effective bitrate calculation (phone-compatible mode):
-// Symbol duration = 50ms + 8ms guard = 58ms per symbol
-// 3 bits per symbol = ~52 symbols/second = ~52 bps raw
-// After RS overhead: 128/160 * 52 ≈ 41 bps effective data
-// Plus framing overhead, ~30-35 bps net
-// ~25% slower than wideband mode but works on standard phone calls
+// Symbol duration = 50ms + 12ms guard = 62ms per symbol
+// 2 bits per symbol (4 tones) = ~32 bps raw
+// After RS overhead: 128/144 * 32 ≈ 28 bps effective data
+// Plus framing overhead, ~20-25 bps net
+// Slower than before but much more reliable over GSM phone calls

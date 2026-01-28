@@ -1,9 +1,7 @@
 /**
  * Forward Error Correction using Reed-Solomon
  *
- * Supports two modes:
- * - Normal: 16 parity bytes (correct up to 8 errors, faster)
- * - Robust: 32 parity bytes (correct up to 16 errors, slower but more reliable)
+ * Uses 16 parity bytes per frame, can correct up to 8 byte errors
  */
 import { RSEncoder } from '../lib/reed-solomon';
 import { FRAME } from '../utils/constants';

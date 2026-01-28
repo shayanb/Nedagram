@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
 import { Help } from './pages/Help';
+import { DebugLog } from './components/DebugLog';
 
 type Page = 'send' | 'receive' | 'help';
 
@@ -32,6 +33,9 @@ export function App() {
     }
   };
 
+  // Only show debug log on send and receive pages
+  const showDebugLog = currentPage.value === 'send' || currentPage.value === 'receive';
+
   return (
     <Layout
       currentPage={currentPage.value}
@@ -39,6 +43,9 @@ export function App() {
       offlineReady={offlineReady.value}
     >
       {renderPage()}
+
+      {/* Debug log panel - persistent across send/receive pages */}
+      {showDebugLog && <DebugLog />}
     </Layout>
   );
 }

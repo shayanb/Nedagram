@@ -1,6 +1,6 @@
 {
   "name": "nedagram",
-  "version": "2.5.4",
+  "version": "2.7.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

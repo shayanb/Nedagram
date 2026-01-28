@@ -21,6 +21,90 @@
   margin-top: var(--space-sm);
 }
 
+/* Upload button and drag-drop */
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  margin-top: var(--space-sm);
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.upload-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(157, 126, 138, 0.05);
+}
+
+.upload-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+  margin: var(--space-xs) 0 0 0;
+}
+
+.receive-page.dragging {
+  position: relative;
+}
+
+.drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(157, 126, 138, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.drag-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  color: white;
+  font-size: var(--font-size-lg);
+  font-weight: 500;
+}
+
+.processing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  color: var(--color-text-muted);
+}
+
+.processing-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.file-progress {
+  margin-top: var(--space-sm);
+}
+
 .chirp-indicator {
   font-size: var(--font-size-sm);
   color: var(--color-success);
@@ -280,3 +364,4 @@
   background: #b86464;
   border-radius: 50%;
 }
+

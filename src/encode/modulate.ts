@@ -84,19 +84,19 @@ function generateChirp(
 
 /**
  * Generate the preamble signal
- * 1. Warmup: Steady tone to wake up audio path
- * 2. Chirp: Up-down sweep for AGC and attention
- * 3. Calibration: Known tones (repeated 2x)
- * 4. Sync word: 8-symbol pattern for reliable detection
+ * 1. Warmup: Steady tone to wake up audio path / AGC settling
+ * 2. Chirp: Up-down sweep for detection and attention
+ * 3. Calibration: Known tones (repeated for reliability)
+ * 4. Sync word: 8-symbol pattern for frame alignment
  */
 export function generatePreamble(sampleRate: number): Float32Array {
   const parts: Float32Array[] = [];
 
-  // Warmup tone (200ms) - middle frequency to wake up audio path
-  const warmupFreq = TONE_FREQUENCIES[Math.floor(TONE_FREQUENCIES.length / 2)];
+  // Warmup tone - use lower frequency for better speaker response
+  const warmupFreq = Math.min(TONE_FREQUENCIES[Math.floor(TONE_FREQUENCIES.length / 2)], 2000);
   parts.push(generateTone(warmupFreq, AUDIO.WARMUP_DURATION_MS, sampleRate, 20));
 
-  // Up chirp (400ms)
+  // Up chirp (half duration)
   parts.push(generateChirp(
     AUDIO.CHIRP_START_HZ,
     AUDIO.CHIRP_PEAK_HZ,
@@ -104,7 +104,7 @@ export function generatePreamble(sampleRate: number): Float32Array {
     sampleRate
   ));
 
-  // Down chirp (400ms)
+  // Down chirp (half duration)
   parts.push(generateChirp(
     AUDIO.CHIRP_PEAK_HZ,
     AUDIO.CHIRP_START_HZ,
@@ -133,15 +133,17 @@ export function generatePreamble(sampleRate: number): Float32Array {
 
 /**
  * Convert bytes to symbols based on current audio mode
- * Phone mode: 3-bit symbols (8 tones)
- * Wideband mode: 4-bit symbols (16 tones)
+ * Uses BITS_PER_SYMBOL from audio settings:
+ * - 4 tones = 2 bits/symbol
+ * - 8 tones = 3 bits/symbol
+ * - 16 tones = 4 bits/symbol
  */
 function bytesToSymbols(bytes: Uint8Array): number[] {
-  const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+  const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
   const symbolMask = (1 << bitsPerSymbol) - 1;
 
+  // Special case: 4 bits per symbol = exactly 2 symbols per byte
   if (bitsPerSymbol === 4) {
-    // Wideband: 4 bits per symbol = 2 symbols per byte
     const symbols: number[] = [];
     for (let i = 0; i < bytes.length; i++) {
       symbols.push((bytes[i] >> 4) & 0x0F);
@@ -150,7 +152,7 @@ function bytesToSymbols(bytes: Uint8Array): number[] {
     return symbols;
   }
 
-  // Phone: 3 bits per symbol
+  // General case: bit packing for 2 or 3 bits per symbol
   const symbols: number[] = [];
   let bitBuffer = 0;
   let bitsInBuffer = 0;
@@ -177,7 +179,7 @@ function bytesToSymbols(bytes: Uint8Array): number[] {
  * Calculate number of symbols needed for given bytes
  */
 export function calculateSymbolCount(byteCount: number): number {
-  const bitsPerSymbol = AUDIO.NUM_TONES === 8 ? 3 : 4;
+  const bitsPerSymbol = AUDIO.BITS_PER_SYMBOL;
   const totalBits = byteCount * 8;
   return Math.ceil(totalBits / bitsPerSymbol);
 }
@@ -270,7 +272,7 @@ export function calculateDuration(totalEncodedBytes: number, sampleRate: number)
   // End marker sync pattern
   durationMs += AUDIO.SYNC_PATTERN.length * AUDIO.SYMBOL_DURATION_MS;
 
-  // Symbols: with 3-bit symbols, we need ceil(bytes * 8 / 3) symbols per message
+  // Symbols: with variable bits per symbol
   const totalSymbols = calculateSymbolCount(totalEncodedBytes);
   durationMs += totalSymbols * AUDIO.SYMBOL_DURATION_MS;
 
