@@ -109,7 +109,9 @@ export class Decoder {
 
   // Header failure detection
   private consecutiveHeaderFailures = 0;
-  private static readonly MAX_HEADER_FAILURES = 3;  // After this many failures, warn user
+  private static readonly MAX_HEADER_FAILURES = 5;  // After this many failures, warn user
+  private static readonly FATAL_HEADER_FAILURES = 15; // After this many, give up and show error
+  private modeRetryAttempted = false; // Track if we've tried the other mode
 
   public progress = signal<DecodeProgress>({
     state: 'idle',
@@ -666,19 +668,24 @@ export class Decoder {
   /**
    * Sync pattern matching for specific mode
    * Sync: [low, high, low, high, ...] alternating pattern
+   * Made stricter to avoid false positives
    */
   private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8): boolean {
-    const tolerance = maxTone > 10 ? 2 : 1;
-    const minMatch = Math.max(4, syncLen - 2); // Need at least 6 of 8 to match
+    // Stricter matching: require 7 out of 8 for reliability
+    const minMatch = syncLen - 1;
 
     let matches = 0;
     for (let i = 0; i < Math.min(syncLen, symbols.length - startIndex); i++) {
       const sym = symbols[startIndex + i];
       const isEven = i % 2 === 0;
 
-      // Even positions should be low (0), odd positions should be high (maxTone)
-      if (isEven && sym <= tolerance) matches++;
-      if (!isEven && sym >= maxTone - tolerance) matches++;
+      // Even positions should be exactly 0, odd positions should be exactly maxTone
+      // Allow small tolerance only for wideband (more tones = more potential drift)
+      if (isEven) {
+        if (sym === 0) matches++;
+      } else {
+        if (sym === maxTone || (maxTone > 10 && sym >= maxTone - 1)) matches++;
+      }
     }
 
     return matches >= minMatch;
@@ -841,6 +848,55 @@ export class Decoder {
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;
     console.log('[Decoder] Header failure count:', this.consecutiveHeaderFailures);
+
+    // Fatal failure - too many header decode failures
+    if (this.consecutiveHeaderFailures >= Decoder.FATAL_HEADER_FAILURES) {
+      // If we haven't tried the other mode yet, try switching
+      if (!this.modeRetryAttempted && this.detectedAudioMode) {
+        const currentMode = this.detectedAudioMode;
+        const otherMode: AudioMode = currentMode === 'phone' ? 'wideband' : 'phone';
+        console.log(`[Decoder] Fatal header failures in ${currentMode} mode, trying ${otherMode} mode`);
+
+        this.modeRetryAttempted = true;
+        this.consecutiveHeaderFailures = 0;
+
+        // Switch to other mode
+        setAudioMode(otherMode);
+        this.detectedAudioMode = otherMode;
+        this.symbolExtractionMode = null; // Force re-extraction
+
+        // Reset symbol buffers and detection state
+        this.bestPhase = -1;
+        this.syncFoundAt = -1;
+        for (let p = 0; p < NUM_PHASES; p++) {
+          this.phaseSymbols[p] = [];
+        }
+
+        // Re-initialize chirp detector for new mode
+        this.chirpDetector = new ChirpDetector(this.sampleRate, 0.3);
+        this.chirpDetected = false;
+        this.chirpEndSample = -1;
+        this.state = 'detecting_preamble';
+        this.lastDebugInfo = `Trying ${otherMode} mode...`;
+        this.updateProgress();
+        return;
+      }
+
+      // Already tried both modes or no mode detected - give up
+      const errorMsg = this.modeRetryAttempted
+        ? 'Decoding failed in both modes. Try moving closer or reducing background noise.'
+        : 'Too many header decode failures. Check signal quality and try again.';
+
+      console.error('[Decoder] Fatal: Too many header failures, giving up');
+      this.state = 'error';
+      this.lastDebugInfo = errorMsg;
+      this.updateProgress();
+
+      if (this.onError) {
+        this.onError(new Error(errorMsg));
+      }
+      return;
+    }
 
     if (this.consecutiveHeaderFailures >= Decoder.MAX_HEADER_FAILURES) {
       this.lastDebugInfo = 'Poor signal - try moving closer or reducing noise';

@@ -65,13 +65,9 @@
   padding: var(--space-xs);
 }
 
-/* Toast-style entries when collapsed */
+/* Hide entries when collapsed */
 .debug-log:not(.expanded) .debug-entries {
-  max-height: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-end;
+  display: none;
 }
 
 .debug-entry {
