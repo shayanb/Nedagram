@@ -29,6 +29,7 @@ export const PHONE_MODE = {
 };
 
 // Wideband mode: for direct device-to-device or HD Voice calls
+// Optimized for phone speaker/mic limitations (poor response above 4kHz)
 export const WIDEBAND_MODE = {
   SAMPLE_RATE: 48000,
   FALLBACK_SAMPLE_RATE: 44100,
@@ -38,13 +39,13 @@ export const WIDEBAND_MODE = {
   BASE_FREQUENCY: 1800,
   TONE_SPACING: 260,
   FREQUENCY_JITTER: 10,
-  WARMUP_DURATION_MS: 200,       // Steady tone before chirp
-  CHIRP_DURATION_MS: 800,        // Longer chirp for AGC settling
+  WARMUP_DURATION_MS: 400,       // Longer warmup for AGC settling (was 200)
+  CHIRP_DURATION_MS: 1200,       // Longer chirp for reliable detection (was 800)
   CALIBRATION_DURATION_MS: 120,
-  CALIBRATION_REPEATS: 2,        // Repeat calibration tones
+  CALIBRATION_REPEATS: 3,        // More calibration repeats for reliability (was 2)
   SYNC_DURATION_MS: 80,
-  CHIRP_START_HZ: 1500,
-  CHIRP_PEAK_HZ: 5000,           // Lowered from 6000 for better phone speaker reproduction
+  CHIRP_START_HZ: 1000,          // Lower start for better phone speaker reproduction
+  CHIRP_PEAK_HZ: 4000,           // Lower peak - phone speakers drop off above 4kHz
   CALIBRATION_TONES: [0, 5, 10, 15] as number[],
   SYNC_PATTERN: [0, 15, 0, 15, 0, 15, 0, 15] as number[],  // 8 symbols for reliability
   BITS_PER_SYMBOL: 4,
