@@ -195,7 +195,7 @@ export function Help() {
           <dd>Up to 8 byte errors per frame</dd>
         </dl>
 
-        <h4>Synchronization</h4>
+        <h4>Synchronization (Phone Mode)</h4>
         <dl class="spec-list">
           <dt>Warmup Tone</dt>
           <dd>200ms steady tone for audio path wake-up</dd>
@@ -208,6 +208,24 @@ export function Help() {
 
           <dt>Calibration</dt>
           <dd>4 tones repeated 2x for level calibration</dd>
+
+          <dt>Sync Pattern</dt>
+          <dd>8-symbol alternating pattern</dd>
+        </dl>
+
+        <h4>Synchronization (Wideband Mode)</h4>
+        <dl class="spec-list">
+          <dt>Warmup Tone</dt>
+          <dd>400ms steady tone for AGC settling</dd>
+
+          <dt>Chirp Sweep</dt>
+          <dd>1200ms up-down frequency sweep (1000-4000 Hz)</dd>
+
+          <dt>Detection Method</dt>
+          <dd>Matched filter cross-correlation (robust to noise)</dd>
+
+          <dt>Calibration</dt>
+          <dd>4 tones repeated 3x for level calibration</dd>
 
           <dt>Sync Pattern</dt>
           <dd>8-symbol alternating pattern</dd>

@@ -121,12 +121,12 @@ Share configuration files, complex passwords, or long URLs via:
 | Error Correction | Up to 8 bytes/frame |
 
 ### Synchronization
-| Component | Description |
-|-----------|-------------|
-| Warmup Tone | 200ms steady tone for audio path wake-up |
-| Chirp Sweep | 800ms up-down frequency sweep (600-2600 Hz) |
-| Matched Filter | Cross-correlation detection for robust sync |
-| Calibration | 4 tones repeated 2x for level calibration |
+| Component | Phone Mode | Wideband Mode |
+|-----------|------------|---------------|
+| Warmup Tone | 200ms steady tone | 400ms steady tone |
+| Chirp Sweep | 800ms (600-2600 Hz) | 1200ms (1000-4000 Hz) |
+| Detection | Matched filter cross-correlation |
+| Calibration | 4 tones × 2 repeats | 4 tones × 3 repeats |
 | Sync Pattern | 8-symbol alternating pattern |
 
 ### Encryption (Optional)
