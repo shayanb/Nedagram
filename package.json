@@ -1,9 +1,31 @@
 {
   "name": "nedagram",
-  "version": "2.8.0",
+  "version": "2.8.2",
+  "description": "Encode and decode text as audio signals - CLI tool for transmitting data over phone calls and audio channels",
   "type": "module",
   "bin": {
-    "nedagram": "./dist-cli/cli/index.js"
+    "nedagram": "./dist-cli/nedagram-cli/index.cjs"
+  },
+  "files": [
+    "dist-cli/nedagram-cli"
+  ],
+  "keywords": [
+    "audio",
+    "modem",
+    "encoding",
+    "decoding",
+    "cli",
+    "phone",
+    "transmission",
+    "offline"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AHK-Labs/Nedagram.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "dev": "vite --host",
@@ -13,7 +35,7 @@
     "test:run": "vitest run",
     "test:cli": "vitest run tests/cli.test.ts",
     "build:cli": "node scripts/build-cli.mjs",
-    "cli": "node dist-cli/cli/index.js"
+    "cli": "node dist-cli/nedagram-cli/index.cjs"
   },
   "dependencies": {
     "@noble/ciphers": "^2.1.1",

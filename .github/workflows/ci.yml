@@ -72,5 +72,5 @@ jobs:
 
       - name: Verify CLI executable
         run: |
-          ./dist-cli/cli/index.js --version
-          ./dist-cli/cli/index.js --help
+          ./dist-cli/nedagram-cli/index.cjs --version
+          ./dist-cli/nedagram-cli/index.cjs --help

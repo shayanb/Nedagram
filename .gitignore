@@ -34,3 +34,6 @@ npm-debug.log*
 
 # Test coverage
 coverage/
+
+# prevent wav files from being tracked
+*.wav

@@ -24,7 +24,7 @@ afterAll(() => {
 });
 
 const cli = (args: string[]) => {
-  const result = spawnSync('node', ['dist-cli/cli/index.js', ...args], {
+  const result = spawnSync('node', ['dist-cli/nedagram-cli/index.cjs', ...args], {
     encoding: 'utf-8',
     timeout: 60000,
   });

@@ -212,7 +212,7 @@ npm install -g nedagram
 npx nedagram --help
 
 # For development (after npm run build:cli)
-./dist-cli/cli/index.js --help
+./dist-cli/nedagram-cli/index.cjs --help
 ```
 
 ### CLI Usage
@@ -290,7 +290,7 @@ npm run build:cli
 # Run CLI (use -- to pass arguments through npm)
 npm run cli -- encode "Hello" -o test.wav
 # Or run directly:
-./dist-cli/cli/index.js encode "Hello" -o test.wav
+./dist-cli/nedagram-cli/index.cjs encode "Hello" -o test.wav
 
 # Run tests
 npm test
