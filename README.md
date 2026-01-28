@@ -10,7 +10,7 @@
 
 ## Why Nedagram?
 
-> "ندا" (Neda) is a Persian feminine given name meaning "voice," "call," or "calling"
+> "Neda" is a Persian feminine given name meaning "voice," "call," or "calling"
 
 Nedagram was built to help share text data when sending files isn't possible. By converting text to audio, you can:
 
