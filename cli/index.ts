@@ -37,6 +37,7 @@ program
   .option('-e, --encrypt', 'Encrypt the message with a password (requires -p)')
   .option('-p, --password <password>', 'Password for encryption (use with -e). Choose a strong password.')
   .option('-q, --quiet', 'Suppress progress output (only show result)')
+  .option('--json', 'Output result as JSON (includes metadata, file path, sha256)')
   .addHelpText('after', `
 Encryption:
   When using -e/--encrypt, you must also provide -p/--password.
@@ -61,6 +62,7 @@ program
   .option('-o, --output <path>', 'Write decoded text to file instead of stdout')
   .option('-p, --password <password>', 'Password to decrypt an encrypted message')
   .option('-q, --quiet', 'Suppress progress output (only show result)')
+  .option('--json', 'Output result as JSON (includes message, metadata, sha256)')
   .addHelpText('after', `
 Decryption:
   If the message was encrypted, you must provide the same password

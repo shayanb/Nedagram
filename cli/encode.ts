@@ -14,13 +14,26 @@ interface EncodeOptions {
   encrypt?: boolean;
   password?: string;
   quiet?: boolean;
+  json?: boolean;
+}
+
+interface EncodeResult {
+  success: boolean;
+  bytes: number;
+  sha256: string;
+  output?: string;
+  duration: number;
+  frames: number;
+  mode: string;
+  encrypted: boolean;
+  compressed: boolean;
 }
 
 export async function encodeCommand(
   text: string | undefined,
   options: EncodeOptions
 ): Promise<void> {
-  const log = options.quiet ? () => {} : console.error.bind(console);
+  const log = options.quiet || options.json ? () => {} : console.error.bind(console);
 
   try {
     // Get input text
@@ -79,14 +92,33 @@ export async function encodeCommand(
       // Write to file
       writeWavFile(options.output, result.audio, result.sampleRate);
       outputPath = options.output;
-    } else if (process.stdout.isTTY) {
-      // Interactive terminal - write to default file
+    } else if (process.stdout.isTTY || options.json) {
+      // Interactive terminal or JSON mode - write to default file
       outputPath = 'nedagram.wav';
       writeWavFile(outputPath, result.audio, result.sampleRate);
     } else {
       // Pipe output - write WAV to stdout
       const wavBuffer = createWavBuffer(result.audio, result.sampleRate);
       process.stdout.write(wavBuffer);
+    }
+
+    // JSON output mode
+    if (options.json) {
+      const jsonResult: EncodeResult = {
+        success: true,
+        bytes: inputText.length,
+        sha256: result.checksum,
+        duration: result.durationSeconds,
+        frames: result.stats.frameCount,
+        mode: mode,
+        encrypted: result.stats.encrypted,
+        compressed: result.stats.compressed,
+      };
+      if (outputPath) {
+        jsonResult.output = outputPath;
+      }
+      console.log(JSON.stringify(jsonResult, null, 2));
+      return;
     }
 
     // Final summary to stderr
@@ -98,6 +130,14 @@ export async function encodeCommand(
     console.error(`SHA-256: ${result.checksum}`);
 
   } catch (error) {
+    if (options.json) {
+      const jsonResult = {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      console.log(JSON.stringify(jsonResult, null, 2));
+      process.exit(1);
+    }
     console.error('Error:', error instanceof Error ? error.message : error);
     process.exit(1);
   }

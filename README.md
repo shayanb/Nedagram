@@ -255,6 +255,7 @@ nedagram decode message.wav > output.txt
 | `-e, --encrypt` | Encrypt the message |
 | `-p, --password <pwd>` | Password for encryption |
 | `-q, --quiet` | Suppress progress output |
+| `--json` | Output result as JSON (includes metadata, sha256) |
 
 **Decode:**
 | Option | Description |
@@ -262,6 +263,7 @@ nedagram decode message.wav > output.txt
 | `-o, --output <path>` | Write decoded text to file |
 | `-p, --password <pwd>` | Password for decryption |
 | `-q, --quiet` | Suppress progress output |
+| `--json` | Output result as JSON (includes message, metadata, sha256) |
 
 ## Development
 
