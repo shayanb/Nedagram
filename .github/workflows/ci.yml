@@ -27,3 +27,50 @@ jobs:
 
       - name: Run tests
         run: npm run test:run
+
+  test-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run CLI tests
+        run: npm run test:cli
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Verify CLI executable
+        run: |
+          ./dist-cli/cli/index.js --version
+          ./dist-cli/cli/index.js --help

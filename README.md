@@ -198,6 +198,71 @@ npm run build
 
 > **Important:** Use `http://127.0.0.1:8000` (not `[::]` or `localhost`) for microphone access to work. For other devices on your network, use your computer's IP address (e.g., `http://192.168.1.x:8000`).
 
+## Command Line Interface (CLI)
+
+Nedagram includes a CLI for encoding and decoding WAV files without a browser.
+
+### Installation
+
+```bash
+# Install globally from npm
+npm install -g nedagram
+
+# Or run directly with npx
+npx nedagram --help
+
+# For development (after npm run build:cli)
+./dist-cli/cli/index.js --help
+```
+
+### CLI Usage
+
+```bash
+# Encode text to WAV file
+nedagram encode "Hello World" -o message.wav
+
+# Encode from file
+nedagram encode -f config.txt -o config.wav
+
+# Encode with encryption
+nedagram encode "Secret data" -o encrypted.wav -e -p "password"
+
+# Encode with phone mode (for phone calls)
+nedagram encode "Text" -o phone.wav -m phone
+
+# Decode WAV file
+nedagram decode message.wav
+
+# Decode encrypted file
+nedagram decode encrypted.wav -p "password"
+
+# Decode to file
+nedagram decode message.wav -o output.txt
+
+# Pipe input/output
+echo "Hello" | nedagram encode -o hello.wav
+nedagram decode message.wav > output.txt
+```
+
+### CLI Options
+
+**Encode:**
+| Option | Description |
+|--------|-------------|
+| `-f, --file <path>` | Read input from file |
+| `-o, --output <path>` | Output WAV file path |
+| `-m, --mode <mode>` | Audio mode: `phone` or `wideband` (default) |
+| `-e, --encrypt` | Encrypt the message |
+| `-p, --password <pwd>` | Password for encryption |
+| `-q, --quiet` | Suppress progress output |
+
+**Decode:**
+| Option | Description |
+|--------|-------------|
+| `-o, --output <path>` | Write decoded text to file |
+| `-p, --password <pwd>` | Password for decryption |
+| `-q, --quiet` | Suppress progress output |
+
 ## Development
 
 ### Prerequisites
@@ -219,8 +284,19 @@ npm run dev
 # Build for production
 npm run build
 
+# Build CLI
+npm run build:cli
+
+# Run CLI (use -- to pass arguments through npm)
+npm run cli -- encode "Hello" -o test.wav
+# Or run directly:
+./dist-cli/cli/index.js encode "Hello" -o test.wav
+
 # Run tests
 npm test
+
+# Run CLI tests
+npm run test:cli
 ```
 
 ### Tech Stack

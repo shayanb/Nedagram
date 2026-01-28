@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,12 +27,44 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
-      - name: Build
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run CLI tests
+        run: npm run test:cli
+
+  release:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
         run: npm run build
+
+      - name: Build CLI
+        run: npm run build:cli
 
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Package CLI
+        run: |
+          cd dist-cli
+          zip -r ../nedagram-cli-${{ steps.version.outputs.VERSION }}.zip cli/
+          cd ..
+          cp nedagram-cli-${{ steps.version.outputs.VERSION }}.zip nedagram-cli.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -41,16 +73,47 @@ jobs:
           body: |
             ## Nedagram v${{ steps.version.outputs.VERSION }}
 
-            ### Offline Package
-            Download `nedagram-offline.zip` below to use Nedagram without internet access.
+            ### Downloads
 
-            **Usage:**
-            1. Extract the ZIP file
+            | Package | Description |
+            |---------|-------------|
+            | `nedagram-offline.zip` | PWA for offline use in browser |
+            | `nedagram-cli.zip` | Command-line interface for encoding/decoding |
+
+            ### Offline PWA Usage
+            1. Extract `nedagram-offline.zip`
             2. Start a local web server: `python3 -m http.server 8000 --bind 127.0.0.1`
             3. Open http://127.0.0.1:8000 in your browser
 
-            See [README](https://github.com/${{ github.repository }}#offline-distribution) for more details.
+            ### CLI Usage
+            1. Extract `nedagram-cli.zip`
+            2. Requires Node.js 18+
+            3. Run: `node cli/index.js --help`
+
+            Or install globally:
+            ```bash
+            npm install -g nedagram
+            nedagram --help
+            ```
+
+            ### CLI Examples
+            ```bash
+            # Encode text to audio
+            nedagram encode "Hello World" -o message.wav
+
+            # Encode with encryption
+            nedagram encode -f secret.txt -o encrypted.wav -e -p "password"
+
+            # Decode audio back to text
+            nedagram decode message.wav
+
+            # Decode encrypted message
+            nedagram decode encrypted.wav -p "password"
+            ```
+
+            See [README](https://github.com/${{ github.repository }}) for more details.
           files: |
             dist/nedagram-offline-${{ steps.version.outputs.VERSION }}.zip
+            nedagram-cli-${{ steps.version.outputs.VERSION }}.zip
           draft: false
           prerelease: false
