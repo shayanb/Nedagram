@@ -1,6 +1,6 @@
 {
   "name": "nedagram",
-  "version": "2.8.3",
+  "version": "2.8.4",
   "description": "Encode and decode text as audio signals - CLI tool for transmitting data over phone calls and audio channels",
   "type": "module",
   "bin": {
@@ -29,7 +29,7 @@
   },
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc && vite build && node -e \"const fs=require('fs');const v=require('./package.json').version+'.'+Date.now();const sw=fs.readFileSync('dist/sw.js','utf8').replace('__SW_VERSION__',v);fs.writeFileSync('dist/sw.js',sw);console.log('SW version:',v)\" && cd dist && rm -f nedagram-offline*.zip && zip -r nedagram-offline-$(node -p \"require('../package.json').version\").zip . -x '*.map' -x 'nedagram-offline*.zip' -x 'icons/og-image.jpg' -x 'icons/logo.png' -x 'icons/icon-192.png' -x 'icons/icon-512.png' -x 'CNAME' -x 'manifest.json' && cp nedagram-offline-$(node -p \"require('../package.json').version\").zip nedagram-offline.zip",
+    "build": "tsc && vite build && npm run build:cli && node -e \"const fs=require('fs');const v=require('./package.json').version+'.'+Date.now();const sw=fs.readFileSync('dist/sw.js','utf8').replace('__SW_VERSION__',v);fs.writeFileSync('dist/sw.js',sw);fs.cpSync('dist-cli/nedagram-cli','dist/cli',{recursive:true});console.log('SW version:',v)\" && cd dist && rm -f nedagram-offline*.zip && zip -r nedagram-offline-$(node -p \"require('../package.json').version\").zip . -x '*.map' -x 'nedagram-offline*.zip' -x 'icons/og-image.jpg' -x 'icons/logo.png' -x 'icons/icon-192.png' -x 'icons/icon-512.png' -x 'CNAME' -x 'manifest.json' && cp nedagram-offline-$(node -p \"require('../package.json').version\").zip nedagram-offline.zip",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",

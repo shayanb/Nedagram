@@ -204,10 +204,48 @@
     <ul>
       <li><code>index.html</code> - Main application</li>
       <li><code>assets/</code> - JavaScript and CSS files</li>
+      <li><code>cli/</code> - Command line interface</li>
       <li><code>sw.js</code> - Service worker for offline caching</li>
-      <li><code>manifest.json</code> - PWA manifest</li>
       <li><code>icons/</code> - App icons</li>
     </ul>
+
+    <h2>Command Line Interface (CLI)</h2>
+    <p>This package includes a CLI for encoding/decoding WAV files without a browser. Requires Node.js 18+.</p>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Encode</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs encode \"Hello World\" -o message.wav')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs encode "Hello World" -o message.wav</code>
+    </div>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Decode</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs decode message.wav')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs decode message.wav</code>
+    </div>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">Help</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs --help')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          Copy
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs --help</code>
+    </div>
+
+    <p>Or install globally: <code>npm install -g nedagram</code> then use <code>nedagram</code> command directly.</p>
 
     <h2>Sharing This Package</h2>
     <p>You can share this entire folder (as a zip) with others. They just need to:</p>
@@ -292,6 +330,44 @@
       <strong>مهم:</strong> باید از یک سرور وب محلی استفاده کنید. باز کردن مستقیم index.html
       (file://) کار نمی‌کند چون مرورگرها دسترسی میکروفون را برای فایل‌های محلی مسدود می‌کنند.
     </div>
+
+    <h2>رابط خط فرمان (CLI)</h2>
+    <p>این بسته شامل CLI برای کدگذاری/رمزگشایی فایل‌های WAV بدون مرورگر است. نیاز به Node.js 18+ دارد.</p>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">کدگذاری</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs encode \"Hello World\" -o message.wav')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs encode "Hello World" -o message.wav</code>
+    </div>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">رمزگشایی</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs decode message.wav')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs decode message.wav</code>
+    </div>
+
+    <div class="command-block">
+      <div class="command-header">
+        <span class="command-label">راهنما</span>
+        <button class="copy-btn" onclick="copyCommand(this, 'node cli/index.cjs --help')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          کپی
+        </button>
+      </div>
+      <code class="command-code">node cli/index.cjs --help</code>
+    </div>
+
+    <p>یا نصب سراسری: <code>npm install -g nedagram</code> سپس مستقیماً از دستور <code>nedagram</code> استفاده کنید.</p>
 
     <h2>اشتراک‌گذاری این بسته</h2>
     <p>می‌توانید این پوشه را (به صورت zip) با دیگران به اشتراک بگذارید. آن‌ها فقط باید:</p>

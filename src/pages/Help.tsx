@@ -97,7 +97,6 @@ export function Help() {
           <p class="commands-title">{t.help.serverCommands}</p>
           <CommandBlock label="Python" command="python3 -m http.server 8000 --bind 127.0.0.1" />
           <CommandBlock label="Node.js" command="npx serve . -l 8000" />
-          <CommandBlock label="PHP" command="php -S 127.0.0.1:8000" />
         </div>
 
         <p class="mode-note">{t.help.offlineDownloadNote}</p>
@@ -115,6 +114,22 @@ export function Help() {
             {t.help.offlineInstructions}
           </a>
         </div>
+      </section>
+      <section class="help-section cli">
+        <h4>Command Line Interface (CLI)</h4>
+        <p>The offline package includes a CLI for encoding/decoding WAV files without a browser. Requires Node.js 18+.</p>
+
+        <div class="server-commands">
+          <p class="commands-title">CLI Usage (from extracted folder)</p>
+          <CommandBlock label="Encode" command='node cli/index.cjs encode "Hello World" -o message.wav' />
+          <CommandBlock label="Decode" command="node cli/index.cjs decode message.wav" />
+          <CommandBlock label="Help" command='node cli/index.cjs --help' />
+        </div>
+
+        <p class="mode-note">
+          Or install globally: <code>npm install -g nedagram</code> then use <code>nedagram</code> command directly.
+          Use <code>--json</code> for machine-readable output.
+        </p>
       </section>
 
       <section class="help-section modes">

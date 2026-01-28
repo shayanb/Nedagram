@@ -198,6 +198,13 @@ npm run build
 
 > **Important:** Use `http://127.0.0.1:8000` (not `[::]` or `localhost`) for microphone access to work. For other devices on your network, use your computer's IP address (e.g., `http://192.168.1.x:8000`).
 
+### CLI in Offline Package
+The offline package includes the CLI in the `cli/` folder. Run it directly with Node.js:
+```bash
+node cli/index.cjs encode "Hello" -o message.wav
+node cli/index.cjs decode message.wav
+```
+
 ## Command Line Interface (CLI)
 
 Nedagram includes a CLI for encoding and decoding WAV files without a browser.
@@ -211,8 +218,8 @@ npm install -g nedagram
 # Or run directly with npx
 npx nedagram --help
 
-# For development (after npm run build:cli)
-./dist-cli/nedagram-cli/index.cjs --help
+# Or use from the offline package (no install needed)
+node cli/index.cjs --help
 ```
 
 ### CLI Usage

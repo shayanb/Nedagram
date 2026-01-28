@@ -5,11 +5,12 @@
  */
 
 import * as esbuild from 'esbuild';
-import { readFileSync, writeFileSync, chmodSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, chmodSync, rmSync, mkdirSync } from 'fs';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
-// Ensure output directory exists
+// Clean and recreate output directory
+rmSync('dist-cli/nedagram-cli', { recursive: true, force: true });
 mkdirSync('dist-cli/nedagram-cli', { recursive: true });
 
 await esbuild.build({
