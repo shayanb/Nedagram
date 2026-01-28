@@ -5,6 +5,8 @@ export const fa: Translations = {
     title: 'نداگرام',
     offlineReady: 'آماده کار آفلاین',
   },
+  updateAvailable: 'نسخه جدید موجود است',
+  updateNow: 'بروزرسانی',
   nav: {
     send: 'ارسال',
     receive: 'دریافت',

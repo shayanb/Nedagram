@@ -269,4 +269,4 @@ Built with the goal of helping people communicate freely when traditional method
 
 ---
 
-**Nedagram** - When technology fails, sound finds a way. :telephone_receiver:
+**Nedagram** - When internet fails, sound finds a way. :telephone_receiver:

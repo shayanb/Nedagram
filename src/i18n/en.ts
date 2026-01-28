@@ -3,6 +3,8 @@ export const en = {
     title: 'Nedagram',
     offlineReady: 'Offline Ready',
   },
+  updateAvailable: 'New version available',
+  updateNow: 'Update',
   nav: {
     send: 'Send',
     receive: 'Receive',

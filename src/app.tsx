@@ -4,6 +4,7 @@ import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
 import { Help } from './pages/Help';
 import { DebugLog } from './components/DebugLog';
+import { UpdateToast } from './components/UpdateToast';
 
 type Page = 'send' | 'receive' | 'help';
 
@@ -46,6 +47,9 @@ export function App() {
 
       {/* Debug log panel - persistent across send/receive pages */}
       {showDebugLog && <DebugLog />}
+
+      {/* Update notification toast */}
+      <UpdateToast />
     </Layout>
   );
 }
