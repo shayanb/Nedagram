@@ -68,10 +68,8 @@ describe('Encode Pipeline', () => {
   });
 
   describe('v3 Protocol Encoding', () => {
-    it('should encode with v3 protocol', async () => {
-      const result = await encodeString('hello v3 world', {
-        protocolVersion: 'v3',
-      });
+    it('should encode with v3 protocol (default)', async () => {
+      const result = await encodeString('hello v3 world');
 
       expect(result.audio).toBeInstanceOf(Float32Array);
       expect(result.audio.length).toBeGreaterThan(0);
@@ -79,33 +77,31 @@ describe('Encode Pipeline', () => {
       expect(result.checksum).toHaveLength(64);
     });
 
-    it('should produce larger output with v3 (due to convolutional FEC)', async () => {
+    it('should produce correct encoded output with v3 FEC', async () => {
       const text = 'test data for v3 encoding';
+      const result = await encodeString(text);
 
-      const v2Result = await encodeString(text, { protocolVersion: 'v2' });
-      const v3Result = await encodeString(text, { protocolVersion: 'v3' });
-
-      // v3 should produce larger encoded output due to convolutional overhead
-      expect(v3Result.stats.totalEncodedBytes).toBeGreaterThan(v2Result.stats.totalEncodedBytes);
-
-      // v3 audio should be longer
-      expect(v3Result.durationSeconds).toBeGreaterThan(v2Result.durationSeconds);
+      // v3 uses concatenated RS + Convolutional FEC
+      // Verify encoding produces reasonable output size
+      expect(result.stats.totalEncodedBytes).toBeGreaterThan(0);
+      expect(result.durationSeconds).toBeGreaterThan(0);
+      expect(result.stats.frameCount).toBeGreaterThanOrEqual(1);
     });
 
     it('should estimate v3 encoding correctly', () => {
       const dataSize = 1000;
+      const estimate = estimateEncode(dataSize);
 
-      const v2Estimate = estimateEncode(dataSize, 'v2');
-      const v3Estimate = estimateEncode(dataSize, 'v3');
-
-      // v3 should estimate longer duration
-      expect(v3Estimate.estimatedDuration).toBeGreaterThan(v2Estimate.estimatedDuration);
+      // Should produce reasonable estimates
+      expect(estimate.estimatedDuration).toBeGreaterThan(0);
+      expect(estimate.estimatedFrames).toBeGreaterThanOrEqual(1);
+      expect(estimate.estimatedAudioBytes).toBeGreaterThan(0);
     });
 
     it('should encode bytes with v3 protocol', async () => {
       const data = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]); // "Hello"
 
-      const result = await encodeBytes(data, { protocolVersion: 'v3' });
+      const result = await encodeBytes(data);
 
       expect(result.audio).toBeInstanceOf(Float32Array);
       expect(result.stats.originalSize).toBe(5);

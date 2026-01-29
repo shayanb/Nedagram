@@ -16,7 +16,7 @@
  *   [2]    Payload length (1 byte, actual data in this frame)
  *   [3..n] Payload (variable, no padding)
  */
-import { FRAME, FRAME_V3 } from '../utils/constants';
+import { FRAME_V3 } from '../utils/constants';
 import { ProtocolVersion } from '../encode/frame';
 import { readUint16LE, bytesToString } from '../utils/helpers';
 
@@ -68,24 +68,24 @@ function crc16(data: Uint8Array): number {
  * Parse compact header frame (after RS/Viterbi decoding)
  * Input: 12-byte header
  *
- * Recognizes both v2 (magic "N1") and v3 (magic "N3") headers
+ * Currently supports v3 protocol (magic "N3")
+ * Protocol version detection is preserved for future extensibility
  */
 export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
-  if (frame.length < FRAME.HEADER_SIZE) {
-    console.log('[Deframe] Header too short:', frame.length, 'expected', FRAME.HEADER_SIZE);
+  if (frame.length < FRAME_V3.HEADER_SIZE) {
+    console.log('[Deframe] Header too short:', frame.length, 'expected', FRAME_V3.HEADER_SIZE);
     return null;
   }
 
-  // Check magic - accept both "N1" (v2) and "N3" (v3)
+  // Check magic - currently only v3 (magic "N3") is supported
+  // Version detection is preserved for future protocol versions
   const magic = bytesToString(frame.subarray(0, 2));
   let protocolVersion: ProtocolVersion;
 
-  if (magic === FRAME.HEADER_MAGIC) {
-    protocolVersion = 'v2';
-  } else if (magic === FRAME_V3.HEADER_MAGIC) {
+  if (magic === FRAME_V3.HEADER_MAGIC) {
     protocolVersion = 'v3';
   } else {
-    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME.HEADER_MAGIC, 'or', FRAME_V3.HEADER_MAGIC);
+    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME_V3.HEADER_MAGIC);
     return null;
   }
 
@@ -137,8 +137,8 @@ export function parseDataFrame(frame: Uint8Array): DataFrameInfo | null {
 
   // Check magic "D"
   const magic = String.fromCharCode(frame[0]);
-  if (magic !== FRAME.DATA_MAGIC) {
-    console.log('[Deframe] Invalid data magic:', frame[0], 'expected', FRAME.DATA_MAGIC.charCodeAt(0));
+  if (magic !== FRAME_V3.DATA_MAGIC) {
+    console.log('[Deframe] Invalid data magic:', frame[0], 'expected', FRAME_V3.DATA_MAGIC.charCodeAt(0));
     return null;
   }
 

@@ -6,8 +6,7 @@
 import { stringToBytes } from '../utils/helpers';
 import { AUDIO, LIMITS } from '../utils/constants';
 import { tryCompress } from './compress';
-import { packetize, ProtocolVersion } from './frame';
-import { encodeWithFEC, calculateEncodedSize } from './fec';
+import { packetize } from './frame';
 import { encodeWithV3FEC, calculateV3TotalSize } from './v3-fec';
 import { interleave, calculateInterleaverDepth } from './interleave';
 import { generateTransmission, calculateDuration } from './modulate';
@@ -51,7 +50,6 @@ export interface EncodeResult {
 export interface EncodeOptions {
   sampleRate?: number;
   password?: string;  // If provided, data will be encrypted
-  protocolVersion?: ProtocolVersion;  // 'v2' (default) or 'v3' (with convolutional FEC)
 }
 
 /**
@@ -96,6 +94,8 @@ export async function encodeString(
 
 /**
  * Encode binary data to audio
+ *
+ * Uses v3 protocol with concatenated RS + Convolutional FEC
  */
 export async function encodeBytes(
   data: Uint8Array,
@@ -104,7 +104,6 @@ export async function encodeBytes(
   const sampleRate = options?.sampleRate ?? AUDIO.SAMPLE_RATE;
   const password = options?.password;
   const encrypted = !!password;
-  const protocolVersion = options?.protocolVersion ?? 'v2';
 
   // Check size limits (account for encryption overhead if needed)
   const effectiveSize = encrypted ? data.length + ENCRYPTION_OVERHEAD : data.length;
@@ -125,30 +124,17 @@ export async function encodeBytes(
     processedData = await encrypt(maybeCompressed, password);
   }
 
-  // Packetize into frames with appropriate protocol version
+  // Packetize into frames with v3 protocol
   const { headerFrame, dataFrames, sessionId } = packetize(
     processedData,
     data.length,
     compressed,
     encrypted,
-    protocolVersion
+    'v3'
   );
 
-  // Add FEC to all frames (v2 or v3)
-  let encodedHeader: Uint8Array;
-  let encodedDataFrames: Uint8Array[];
-
-  if (protocolVersion === 'v3') {
-    // v3: Concatenated RS + Convolutional FEC with scrambling
-    const v3Result = encodeWithV3FEC(headerFrame, dataFrames);
-    encodedHeader = v3Result.encodedHeader;
-    encodedDataFrames = v3Result.encodedDataFrames;
-  } else {
-    // v2: RS-only FEC
-    const v2Result = encodeWithFEC(headerFrame, dataFrames);
-    encodedHeader = v2Result.encodedHeader;
-    encodedDataFrames = v2Result.encodedDataFrames;
-  }
+  // Add v3 FEC to all frames (RS + Scramble + Convolutional)
+  const { encodedHeader, encodedDataFrames } = encodeWithV3FEC(headerFrame, dataFrames);
 
   // Interleave each frame for burst error protection
   // This spreads adjacent bytes across the frame, so burst errors
@@ -190,13 +176,9 @@ export async function encodeBytes(
 /**
  * Estimate encoding stats without performing full encode
  *
- * @param dataSize - Size of data to encode
- * @param protocolVersion - Protocol version ('v2' or 'v3')
+ * Uses v3 protocol sizing (RS + Convolutional FEC)
  */
-export function estimateEncode(
-  dataSize: number,
-  protocolVersion: ProtocolVersion = 'v2'
-): {
+export function estimateEncode(dataSize: number): {
   estimatedFrames: number;
   estimatedDuration: number;
   estimatedAudioBytes: number;
@@ -204,18 +186,8 @@ export function estimateEncode(
   // Assume ~50% compression for typical text
   const estimatedCompressedSize = Math.floor(dataSize * 0.6);
 
-  let dataFrames: number;
-  let totalBytes: number;
-
-  if (protocolVersion === 'v3') {
-    const v3Stats = calculateV3TotalSize(estimatedCompressedSize);
-    dataFrames = v3Stats.dataFrames;
-    totalBytes = v3Stats.totalBytes;
-  } else {
-    const v2Stats = calculateEncodedSize(estimatedCompressedSize);
-    dataFrames = v2Stats.dataFrames;
-    totalBytes = v2Stats.totalBytes;
-  }
+  const v3Stats = calculateV3TotalSize(estimatedCompressedSize);
+  const { dataFrames, totalBytes } = v3Stats;
 
   const estimatedDuration = calculateDuration(totalBytes, AUDIO.SAMPLE_RATE);
 

@@ -8,10 +8,10 @@
  * precise timing is used to align symbol extraction.
  */
 import { signal } from '@preact/signals';
-import { AUDIO, FRAME, PHONE_MODE, WIDEBAND_MODE, setAudioMode, getAudioMode, type AudioMode } from '../utils/constants';
+import { AUDIO, FRAME_V3, PHONE_MODE, WIDEBAND_MODE, setAudioMode, getAudioMode, type AudioMode } from '../utils/constants';
 import { bytesToString } from '../utils/helpers';
 import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
-import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize } from './fec';
+import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize, getDataFrameSize } from './fec';
 import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } from './deframe';
 import { processPayload, type ProcessResult } from './decompress';
 import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
@@ -921,14 +921,14 @@ export class Decoder {
    * Get optimal frame size matching encoder's getOptimalFrameSize logic
    */
   private getOptimalFrameSize(): number {
-    if (!this.headerInfo) return FRAME.PAYLOAD_SIZE;
+    if (!this.headerInfo) return FRAME_V3.PAYLOAD_SIZE;
 
     const totalPayload = this.headerInfo.payloadLength;
 
     // Match encoder's optimal frame size logic
     if (totalPayload <= 32) return 32;
     if (totalPayload <= 64) return 64;
-    return FRAME.PAYLOAD_SIZE; // 128
+    return FRAME_V3.PAYLOAD_SIZE; // 128
   }
 
   /**
@@ -952,7 +952,7 @@ export class Decoder {
     const symbols = this.phaseSymbols[this.bestPhase];
 
     // Calculate where data frames start
-    const headerEncodedBytes = FRAME.HEADER_SIZE + FRAME.RS_PARITY_SIZE; // 12 + 16 = 28
+    const headerEncodedBytes = getHeaderSize();
     const headerCopies = this.headerRepeated ? 2 : 1;
     const headerSymbols = this.calculateSymbolsForBytes(headerEncodedBytes) * headerCopies;
     const dataStart = this.syncFoundAt + headerSymbols;
@@ -971,7 +971,7 @@ export class Decoder {
     const frameSymbolOffsets: number[] = [0];
     for (let i = 0; i < framesExpected; i++) {
       const payloadSize = this.getActualFramePayloadSize(i);
-      const frameBytes = 3 + payloadSize + FRAME.RS_PARITY_SIZE;
+      const frameBytes = getDataFrameSize(payloadSize);
       const frameSym = this.calculateSymbolsForBytes(frameBytes);
       frameSymbolOffsets.push(frameSymbolOffsets[i] + frameSym);
     }
@@ -994,7 +994,7 @@ export class Decoder {
 
       // Calculate this frame's actual payload size
       const thisFramePayloadSize = this.getActualFramePayloadSize(f);
-      const thisFrameEncodedBytes = 3 + thisFramePayloadSize + FRAME.RS_PARITY_SIZE;
+      const thisFrameEncodedBytes = getDataFrameSize(thisFramePayloadSize);
 
       // Frame position from pre-calculated offsets
       const frameStart = dataStart + frameSymbolOffsets[f];
@@ -1017,8 +1017,8 @@ export class Decoder {
       console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
       console.log('[Decoder] Expected: [68, ...] = "D" magic');
 
-      // Decode FEC
-      const decodeResult = decodeDataFEC(frameBytes);
+      // Decode FEC (pass expected payload size for Viterbi decoding)
+      const decodeResult = decodeDataFEC(frameBytes, thisFramePayloadSize);
 
       if (decodeResult.success) {
         const frame = parseDataFrame(decodeResult.data);

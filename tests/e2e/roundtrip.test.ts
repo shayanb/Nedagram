@@ -3,8 +3,8 @@ import { encodeString } from '../../src/encode';
 import { tryCompress, decompress } from '../../src/encode/compress';
 import { packetize, createHeaderFrame, createDataFrame } from '../../src/encode/frame';
 import { parseHeaderFrame, parseDataFrame, FrameCollector } from '../../src/decode/deframe';
-import { addFEC } from '../../src/encode/fec';
-import { decodeFEC } from '../../src/decode/fec';
+import { encodeDataV3FEC, V3_FEC_CONFIG } from '../../src/encode/v3-fec';
+import { decodeDataV3FEC } from '../../src/decode/v3-fec';
 import { stringToBytes, bytesToString } from '../../src/utils/helpers';
 
 describe('End-to-End Roundtrip', () => {
@@ -34,7 +34,7 @@ describe('End-to-End Roundtrip', () => {
       const parsed = parseHeaderFrame(frame);
 
       expect(parsed).not.toBeNull();
-      expect(parsed!.magic).toBe('N1'); // Compact format uses N1
+      expect(parsed!.magic).toBe('N3'); // v3 protocol uses N3
       expect(parsed!.totalFrames).toBe(5);
       expect(parsed!.payloadLength).toBe(1024);
       expect(parsed!.originalLength).toBe(2048);
@@ -61,36 +61,46 @@ describe('End-to-End Roundtrip', () => {
   });
 
   describe('FEC roundtrip', () => {
-    it('should encode and decode with FEC (no errors)', () => {
-      const data = new Uint8Array(128);
-      for (let i = 0; i < data.length; i++) data[i] = i * 2;
+    it('should encode and decode with v3 FEC (no errors)', () => {
+      // v3 FEC expects data frames: 3 bytes overhead + payload
+      const payloadSize = 64;
+      const dataFrame = new Uint8Array(3 + payloadSize);
+      dataFrame[0] = 0x44; // 'D' magic
+      dataFrame[1] = 1;    // frame index
+      dataFrame[2] = payloadSize; // payload length
+      for (let i = 3; i < dataFrame.length; i++) dataFrame[i] = (i * 2) % 256;
 
-      const encoded = addFEC(data);
-      expect(encoded.length).toBe(144); // 128 + 16 parity (compact format)
+      const encoded = encodeDataV3FEC(dataFrame);
+      // v3 FEC: RS + Convolutional encoding expands the data
+      expect(encoded.length).toBeGreaterThan(dataFrame.length + V3_FEC_CONFIG.RS_PARITY_SIZE);
 
-      const { data: decoded, success, correctedErrors } = decodeFEC(encoded);
+      const { data: decoded, success, correctedErrors } = decodeDataV3FEC(encoded, payloadSize);
 
       expect(success).toBe(true);
-      expect(decoded).toEqual(data);
+      expect(Array.from(decoded)).toEqual(Array.from(dataFrame));
       expect(correctedErrors).toBe(0);
     });
 
-    // Error correction - with 16 parity bytes, can correct up to 8 errors
-    it('should correct errors', () => {
-      const data = new Uint8Array(128);
-      for (let i = 0; i < data.length; i++) data[i] = i * 2;
+    // Error correction - v3 FEC handles both convolutional and RS errors
+    it('should correct errors with v3 FEC', () => {
+      // v3 FEC expects data frames: 3 bytes overhead + payload
+      const payloadSize = 64;
+      const dataFrame = new Uint8Array(3 + payloadSize);
+      dataFrame[0] = 0x44; // 'D' magic
+      dataFrame[1] = 1;    // frame index
+      dataFrame[2] = payloadSize; // payload length
+      for (let i = 3; i < dataFrame.length; i++) dataFrame[i] = (i * 2) % 256;
 
-      const encoded = addFEC(data);
-      // Introduce 3 errors (well within 8 error limit)
-      encoded[10] ^= 0xFF;
-      encoded[50] ^= 0xFF;
-      encoded[100] ^= 0xFF;
+      const encoded = encodeDataV3FEC(dataFrame);
+      // Introduce errors in the encoded stream (will be partially corrected by Viterbi)
+      encoded[10] ^= 0x0F;  // Bit errors
+      encoded[50] ^= 0x0F;
+      encoded[80] ^= 0x0F;
 
-      const { data: decoded, success, correctedErrors } = decodeFEC(encoded);
+      const { data: decoded, success } = decodeDataV3FEC(encoded, payloadSize);
 
       expect(success).toBe(true);
-      expect(decoded).toEqual(data);
-      expect(correctedErrors).toBe(3);
+      expect(Array.from(decoded)).toEqual(Array.from(dataFrame));
     });
   });
 

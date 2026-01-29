@@ -1,21 +1,22 @@
 /**
- * Reed-Solomon FEC decoding
+ * FEC decoding for v3 protocol
  *
- * Uses 16 parity bytes, can correct up to 8 byte errors per frame
+ * Uses concatenated RS + Convolutional FEC with Viterbi decoding
+ *
+ * This module provides the interface used by the decoder.
+ * Actual implementation is in v3-fec.ts
  */
-import { RSDecoder } from '../lib/reed-solomon';
-import { FRAME } from '../utils/constants';
 
-// Cache decoder to avoid recreating
-let decoder: RSDecoder | null = null;
+import {
+  decodeHeaderV3FEC,
+  decodeDataV3FEC,
+  decodeHeaderV3FECWithRedundancy,
+  getV3HeaderEncodedSize,
+  getV3DataEncodedSize,
+  V3FECDecodeResult,
+} from './v3-fec';
 
-function getDecoder(): RSDecoder {
-  if (!decoder) {
-    decoder = new RSDecoder(FRAME.RS_PARITY_SIZE);
-  }
-  return decoder;
-}
-
+// Re-export result type for compatibility
 export interface FECDecodeResult {
   data: Uint8Array;
   correctedErrors: number;
@@ -23,63 +24,59 @@ export interface FECDecodeResult {
 }
 
 /**
- * Decode and remove FEC from received data
+ * Convert v3 result to standard FEC result
  */
-export function decodeFEC(received: Uint8Array): FECDecodeResult {
-  const dec = getDecoder();
-  try {
-    const { data, correctedErrors } = dec.decode(received);
-    if (correctedErrors > 0) {
-      console.log(`[FEC] Corrected ${correctedErrors} byte errors`);
-    }
-    return { data, correctedErrors, success: true };
-  } catch (err) {
-    console.warn('[FEC] RS decode failed:', (err as Error).message);
-    return {
-      data: received.subarray(0, received.length - FRAME.RS_PARITY_SIZE),
-      correctedErrors: -1,
-      success: false,
-    };
-  }
+function toFECResult(v3Result: V3FECDecodeResult): FECDecodeResult {
+  return {
+    data: v3Result.data,
+    correctedErrors: v3Result.correctedErrors,
+    success: v3Result.success,
+  };
 }
 
 /**
- * Decode compact header frame (28 bytes → 12 bytes)
- * Header: 12 bytes + 16 RS parity = 28 bytes
+ * Decode header frame with v3 FEC
+ * Header is encoded with RS + Convolutional
  */
 export function decodeHeaderFEC(received: Uint8Array): FECDecodeResult {
-  const expectedSize = FRAME.HEADER_SIZE + FRAME.RS_PARITY_SIZE; // 12 + 16 = 28
-
-  if (received.length !== expectedSize) {
-    console.log('[FEC] Header size mismatch:', received.length, 'expected', expectedSize);
-    return {
-      data: new Uint8Array(0),
-      correctedErrors: -1,
-      success: false,
-    };
-  }
-
-  return decodeFEC(received);
+  return toFECResult(decodeHeaderV3FEC(received));
 }
 
 /**
- * Decode compact data frame (variable length)
- * Data frame: (3 + payload) + 16 RS parity
- * Minimum: 3 + 16 = 19 bytes
+ * Decode data frame with v3 FEC
+ *
+ * @param received - Received encoded bytes
+ * @param payloadSize - Expected payload size (needed for v3 Viterbi)
  */
-export function decodeDataFEC(received: Uint8Array): FECDecodeResult {
-  const minSize = 3 + FRAME.RS_PARITY_SIZE; // 19 bytes minimum
+export function decodeDataFEC(received: Uint8Array, payloadSize?: number): FECDecodeResult {
+  // If payload size not provided, estimate from received size
+  // This is a fallback - callers should provide the expected size
+  const size = payloadSize ?? estimatePayloadSize(received.length);
+  return toFECResult(decodeDataV3FEC(received, size));
+}
 
-  if (received.length < minSize) {
-    console.log('[FEC] Data frame too short:', received.length, 'minimum', minSize);
-    return {
-      data: new Uint8Array(0),
-      correctedErrors: -1,
-      success: false,
-    };
+/**
+ * Estimate payload size from encoded frame length
+ * Used when payload size is not provided
+ */
+function estimatePayloadSize(encodedLength: number): number {
+  // Work backwards from v3 encoded size
+  // This is approximate - exact size requires knowing the original payload
+  // For most cases, the caller should provide the expected size
+
+  // Try common payload sizes and find the closest match
+  const commonSizes = [128, 64, 32, 16, 8, 4, 1];
+
+  for (const size of commonSizes) {
+    const expectedEncoded = getV3DataEncodedSize(size);
+    if (Math.abs(expectedEncoded - encodedLength) <= 2) {
+      return size;
+    }
   }
 
-  return decodeFEC(received);
+  // Fallback: estimate based on ratio
+  // v3 encoding expands data by roughly 1.5x (RS) * 1.5x (conv) = 2.25x
+  return Math.max(1, Math.floor(encodedLength / 2.25) - 3);
 }
 
 /**
@@ -90,34 +87,19 @@ export function decodeHeaderWithRedundancy(
   copy1: Uint8Array,
   copy2: Uint8Array
 ): FECDecodeResult {
-  const result1 = decodeHeaderFEC(copy1);
-  const result2 = decodeHeaderFEC(copy2);
-
-  // If both succeeded, use the one with fewer errors
-  if (result1.success && result2.success) {
-    const best = result1.correctedErrors <= result2.correctedErrors ? result1 : result2;
-    console.log(`[FEC] Header decoded from ${result1.correctedErrors <= result2.correctedErrors ? 'copy1' : 'copy2'}`);
-    return best;
-  }
-
-  // If only one succeeded, use that one
-  if (result1.success) {
-    console.log('[FEC] Header decoded from copy1 (copy2 failed)');
-    return result1;
-  }
-  if (result2.success) {
-    console.log('[FEC] Header decoded from copy2 (copy1 failed)');
-    return result2;
-  }
-
-  // Both copies failed - return first result
-  console.warn('[FEC] Both header copies failed RS decode');
-  return result1;
+  return toFECResult(decodeHeaderV3FECWithRedundancy(copy1, copy2));
 }
 
 /**
- * Get expected header size
+ * Get expected v3 header encoded size
  */
 export function getHeaderSize(): number {
-  return FRAME.HEADER_SIZE + FRAME.RS_PARITY_SIZE;  // 12 + 16 = 28
+  return getV3HeaderEncodedSize();
+}
+
+/**
+ * Get expected v3 data frame encoded size
+ */
+export function getDataFrameSize(payloadSize: number): number {
+  return getV3DataEncodedSize(payloadSize);
 }
