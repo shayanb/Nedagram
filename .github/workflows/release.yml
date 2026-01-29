@@ -105,7 +105,7 @@ jobs:
 
             ### Install via npm
             ```bash
-            npm install -g @nedagram/nedagram
+            npm install -g nedagram
             nedagram --help
             ```
 
