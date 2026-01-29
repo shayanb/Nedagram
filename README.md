@@ -213,10 +213,10 @@ Nedagram includes a CLI for encoding and decoding WAV files without a browser.
 
 ```bash
 # Install globally from npm
-npm install -g nedagram
+npm install -g @nedagram/nedagram
 
 # Or run directly with npx
-npx nedagram --help
+npx @nedagram/nedagram --help
 
 # Or use from the offline package (no install needed)
 node cli/index.cjs --help
@@ -319,11 +319,11 @@ npm run test:cli
 
 ## Privacy & Security
 
+- **Encryption** - Always protect sensitive data with a password
+- **Offline capable** - Works without any network **after first load**, also has a downloadable offline package (& CLI)
 - **No telemetry** - No data is sent anywhere
 - **No backend** - Entirely client-side
-- **Offline capable** - Works without any network after first load
-- **Open source** - Audit the code yourself
-- **Optional encryption** - Protect sensitive data with a password
+- **Open source** - Audit the code yourself, please do!
 
 ## Browser Support
 

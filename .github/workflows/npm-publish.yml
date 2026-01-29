@@ -63,5 +63,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Install with:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "npm install -g nedagram" >> $GITHUB_STEP_SUMMARY
+          echo "npm install -g @nedagram/nedagram" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -127,7 +127,7 @@ export function Help() {
         </div>
 
         <p class="mode-note">
-          Or install globally: <code>npm install -g nedagram</code> then use <code>nedagram</code> command directly.
+          Or install globally: <code>npm install -g @nedagram/nedagram</code> then use <code>nedagram</code> command directly.
           Use <code>--json</code> for machine-readable output.
         </p>
       </section>

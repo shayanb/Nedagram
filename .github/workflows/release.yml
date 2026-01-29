@@ -92,7 +92,7 @@ jobs:
 
             Or install globally:
             ```bash
-            npm install -g nedagram
+            npm install -g @nedagram/nedagram
             nedagram --help
             ```
 
