@@ -32,9 +32,10 @@ export function Send() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const inputBytes = stringToBytes(inputText).length;
-  const sizeCheck = inputBytes > 0 ? checkPayloadSize(stringToBytes(inputText)) : null;
-  const estimate = inputBytes > 0 ? estimateEncode(inputBytes) : null;
+  const inputData = stringToBytes(inputText);
+  const inputBytes = inputData.length;
+  const sizeCheck = inputBytes > 0 ? checkPayloadSize(inputData) : null;
+  const estimate = inputBytes > 0 ? estimateEncode(inputBytes, inputData) : null;
 
   const canEncode = inputText.length > 0 && (sizeCheck?.valid ?? true) && (!encryptEnabled || password.length > 0);
   // Show QR for small payloads - when encrypted, only show after encoding (with ciphertext)

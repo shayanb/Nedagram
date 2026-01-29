@@ -177,14 +177,23 @@ export async function encodeBytes(
  * Estimate encoding stats without performing full encode
  *
  * Uses v3 protocol sizing (RS + Convolutional FEC)
+ * If data is provided, uses actual compression for accurate estimate
  */
-export function estimateEncode(dataSize: number): {
+export function estimateEncode(dataSize: number, data?: Uint8Array): {
   estimatedFrames: number;
   estimatedDuration: number;
   estimatedAudioBytes: number;
 } {
-  // Assume ~50% compression for typical text
-  const estimatedCompressedSize = Math.floor(dataSize * 0.6);
+  let estimatedCompressedSize: number;
+
+  if (data) {
+    // Use actual compression for accurate estimate
+    const { data: compressed, compressed: wasCompressed } = tryCompress(data);
+    estimatedCompressedSize = wasCompressed ? compressed.length : data.length;
+  } else {
+    // Fallback: assume ~40% compression for typical text (conservative)
+    estimatedCompressedSize = Math.floor(dataSize * 0.6);
+  }
 
   const v3Stats = calculateV3TotalSize(estimatedCompressedSize);
   const { dataFrames, totalBytes } = v3Stats;
