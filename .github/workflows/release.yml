@@ -39,6 +39,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -59,6 +61,26 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "PREV_TAG=$PREV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Get commit message
+        id: commit
+        run: |
+          # Get commit title (first line)
+          TITLE=$(git log -1 --format=%s)
+          echo "TITLE=$TITLE" >> $GITHUB_OUTPUT
+
+          # Get commit body (everything after first line, trimmed)
+          BODY=$(git log -1 --format=%b)
+          # Use delimiter for multiline output
+          echo "BODY<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Package CLI
         run: |
           cd dist-cli
@@ -69,9 +91,23 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Nedagram v${{ steps.version.outputs.VERSION }}
+          name: v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Nedagram v${{ steps.version.outputs.VERSION }}
+            ## ${{ steps.commit.outputs.TITLE }}
+
+            ${{ steps.commit.outputs.BODY }}
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.prev_tag.outputs.PREV_TAG }}...v${{ steps.version.outputs.VERSION }}
+
+            ---
+
+            **Website**: [nedagram.com](https://nedagram.com)
+
+            ### Install via npm
+            ```bash
+            npm install -g @nedagram/nedagram
+            nedagram --help
+            ```
 
             ### Downloads
 
@@ -85,16 +121,10 @@ jobs:
             2. Start a local web server: `python3 -m http.server 8000 --bind 127.0.0.1`
             3. Open http://127.0.0.1:8000 in your browser
 
-            ### CLI Usage
+            ### CLI Usage (from zip)
             1. Extract `nedagram-cli.zip`
             2. Requires Node.js 18+
             3. Run: `node nedagram-cli/index.cjs --help`
-
-            Or install globally:
-            ```bash
-            npm install -g @nedagram/nedagram
-            nedagram --help
-            ```
 
             ### CLI Examples
             ```bash
