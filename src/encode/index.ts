@@ -167,7 +167,7 @@ export async function encodeBytes(
       compressedSize: processedData.length,
       compressed,
       encrypted,
-      frameCount: dataFrames.length + 1, // +1 for header
+      frameCount: dataFrames.length,
       totalEncodedBytes,
     },
   };
@@ -195,7 +195,7 @@ export function estimateEncode(dataSize: number): {
   const estimatedAudioBytes = Math.floor(estimatedDuration * AUDIO.SAMPLE_RATE * 2);
 
   return {
-    estimatedFrames: dataFrames + 1,
+    estimatedFrames: dataFrames,
     estimatedDuration,
     estimatedAudioBytes,
   };

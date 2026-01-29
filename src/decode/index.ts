@@ -112,6 +112,17 @@ export class Decoder {
   private static readonly MAX_HEADER_FAILURES = 5;  // After this many failures, warn user
   private static readonly FATAL_HEADER_FAILURES = 15; // After this many, give up and show error
   private modeRetryAttempted = false; // Track if we've tried the other mode
+  private failedSyncPositions: Set<string> = new Set(); // Track failed sync positions to avoid retrying
+  private headerOffsetRetries = 0; // Track position offset retries
+  private static readonly MAX_OFFSET_RETRIES = 3; // Try ±1, ±2 symbol offsets
+
+  // Data frame failure detection
+  private failedDataFrames: Set<number> = new Set(); // Track frames that failed FEC
+  private static readonly SYMBOL_BUFFER_RATIO = 1.5; // Wait for 50% more symbols than expected before failing
+
+  // Performance throttling
+  private patternSearchCounter = 0;
+  private static readonly PATTERN_SEARCH_INTERVAL = 3; // Only search patterns every N audio chunks
 
   public progress = signal<DecodeProgress>({
     state: 'idle',
@@ -233,6 +244,8 @@ export class Decoder {
     this.bestPhase = -1;
     this.syncFoundAt = -1;
     this.framesAttempted = new Set();
+    this.failedDataFrames.clear();
+    this.patternSearchCounter = 0;
     this.headerRepeated = false;
     this.chirpDetected = false;
     this.chirpEndSample = -1;
@@ -243,6 +256,8 @@ export class Decoder {
     this.password = null;
     this.pendingPayload = null;
     this.consecutiveHeaderFailures = 0;
+    this.failedSyncPositions.clear();
+    this.headerOffsetRetries = 0;
 
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
@@ -309,11 +324,16 @@ export class Decoder {
 
     // Process based on state
     if (this.bestPhase < 0) {
-      // If chirp is detected, use precise timing; otherwise fall back to pattern search
-      if (this.chirpDetected && this.chirpEndSample > 0) {
-        this.findBestPhaseFromChirp();
-      } else {
-        this.findBestPhase();
+      // Throttle pattern search to reduce CPU load during preamble detection
+      this.patternSearchCounter++;
+      if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
+        this.patternSearchCounter = 0;
+        // If chirp is detected, use precise timing; otherwise fall back to pattern search
+        if (this.chirpDetected && this.chirpEndSample > 0) {
+          this.findBestPhaseFromChirp();
+        } else {
+          this.findBestPhase();
+        }
       }
     } else if (this.state === 'receiving_header') {
       this.processHeader();
@@ -500,6 +520,29 @@ export class Decoder {
     this.lastDebugInfo = 'Chirp found, searching for sync pattern...';
   }
 
+  /**
+   * Check if a sync position has already been tried and failed
+   */
+  private isSyncPositionFailed(phase: number, syncFoundAt: number): boolean {
+    // Check exact position and nearby positions (±2)
+    for (let offset = -2; offset <= 2; offset++) {
+      const key = `${phase}:${syncFoundAt + offset}`;
+      if (this.failedSyncPositions.has(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Mark a sync position as failed
+   */
+  private markSyncPositionFailed(phase: number, syncFoundAt: number): void {
+    const key = `${phase}:${syncFoundAt}`;
+    this.failedSyncPositions.add(key);
+    console.log('[Decoder] Marked sync position as failed:', key);
+  }
+
   private findBestPhase(): void {
     // Try to detect both phone and wideband patterns
     // New preamble: calibration (repeated 2x) + sync (8 symbols)
@@ -523,78 +566,100 @@ export class Decoder {
       },
     ];
 
+    // Search in order of match quality: full pattern > sync-only > loose
+    // This ensures we find the best match across ALL phases before falling back
+
+    // PASS 1: Try full calibration+sync pattern (16 symbols) - most reliable
     for (let phase = 0; phase < NUM_PHASES; phase++) {
       const symbols = this.phaseSymbols[phase];
+      if (symbols.length < 20) continue;
 
-      if (symbols.length < 20) continue; // Need at least pattern + some header
-
-      // Try each audio mode pattern
       for (const { mode, calib, sync, maxTone } of modes) {
-        // Full pattern: calibration repeated + sync (16 symbols total)
         const fullCalib: number[] = [];
         for (let r = 0; r < calibRepeats; r++) {
           fullCalib.push(...calib);
         }
         const fullPattern = [...fullCalib, ...sync];
-        const patternLen = fullPattern.length; // 16 symbols
+        const patternLen = fullPattern.length;
 
-        // Search for the full pattern with tolerance
         for (let i = 0; i <= symbols.length - patternLen; i++) {
+          const syncPos = i + patternLen;
+          if (this.isSyncPositionFailed(phase, syncPos)) continue;
+
           if (this.matchesPatternForMode(symbols, i, fullPattern, maxTone)) {
             this.bestPhase = phase;
-            this.syncFoundAt = i + patternLen;
+            this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
             this.detectedAudioMode = mode;
-
-            // Set the audio mode globally
             setAudioMode(mode);
             this.updateSymbolTiming();
 
             console.log('[Decoder] Found', mode, 'calibration+sync at phase', phase, 'index', i);
             console.log('[Decoder] Pattern found:', symbols.slice(i, i + patternLen));
             console.log('[Decoder] Expected:', fullPattern);
-
             this.lastDebugInfo = `Sync found (${mode} mode)! Receiving header...`;
             return;
           }
         }
+      }
+    }
 
-        // Try just sync pattern as fallback (8 symbols now)
+    // PASS 2: Try sync-only pattern (8 symbols) - fallback
+    for (let phase = 0; phase < NUM_PHASES; phase++) {
+      const symbols = this.phaseSymbols[phase];
+      if (symbols.length < 20) continue;
+
+      for (const { mode, sync, maxTone } of modes) {
         const syncLen = sync.length;
         for (let i = 0; i <= symbols.length - syncLen; i++) {
+          const syncPos = i + syncLen;
+          if (this.isSyncPositionFailed(phase, syncPos)) continue;
+
           if (this.matchesSyncPatternForMode(symbols, i, maxTone, syncLen)) {
-            if (symbols.length > i + syncLen + 12) {
+            if (symbols.length > syncPos + 12) {
               this.bestPhase = phase;
-              this.syncFoundAt = i + syncLen;
+              this.syncFoundAt = syncPos;
               this.state = 'receiving_header';
               this.detectedAudioMode = mode;
-
               setAudioMode(mode);
               this.updateSymbolTiming();
 
               console.log('[Decoder] Found', mode, 'sync-only at phase', phase, 'index', i);
               console.log('[Decoder] Pattern:', symbols.slice(i, i + syncLen));
-
               this.lastDebugInfo = `Sync found (${mode}, sync-only)!`;
               return;
             }
           }
         }
+      }
+    }
 
-        // Try loose pattern matching (just calibration + first 4 sync symbols)
+    // PASS 3: Try loose pattern (8 symbols with tolerance) - last resort
+    // Require extra buffer to ensure we've had time to detect any full pattern first
+    for (let phase = 0; phase < NUM_PHASES; phase++) {
+      const symbols = this.phaseSymbols[phase];
+      if (symbols.length < 20) continue;
+
+      for (const { mode, maxTone } of modes) {
         for (let i = 0; i <= symbols.length - 8; i++) {
+          const syncPos = i + 8;
+          if (this.isSyncPositionFailed(phase, syncPos)) continue;
+
+          // Require enough symbols that a full pattern at i-4 would have been detectable
+          // Full pattern at (i-4) needs symbols up to (i-4+16) = (i+12)
+          // This prevents matching a loose pattern before its containing full pattern is visible
+          if (symbols.length < i + 16) continue;
+
           if (this.matchesLoosePatternForMode(symbols, i, maxTone)) {
             this.bestPhase = phase;
-            this.syncFoundAt = i + 8;
+            this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
             this.detectedAudioMode = mode;
-
             setAudioMode(mode);
             this.updateSymbolTiming();
 
             console.log('[Decoder] Found', mode, 'loose pattern at phase', phase, 'index', i);
             console.log('[Decoder] Pattern found:', symbols.slice(i, i + 8));
-
             this.lastDebugInfo = `Sync found (${mode}, loose)!`;
             return;
           }
@@ -671,8 +736,9 @@ export class Decoder {
    * Made stricter to avoid false positives
    */
   private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8): boolean {
-    // Stricter matching: require 7 out of 8 for reliability
-    const minMatch = syncLen - 1;
+    // Phone mode (4 tones): require exact 8/8 match - less margin for error
+    // Wideband mode (16 tones): allow 7/8 - more tones means more potential drift
+    const minMatch = maxTone > 10 ? syncLen - 1 : syncLen;
 
     let matches = 0;
     for (let i = 0; i < Math.min(syncLen, symbols.length - startIndex); i++) {
@@ -694,16 +760,29 @@ export class Decoder {
   /**
    * Loose pattern matching for cross-device compatibility
    * Works for both phone (8 tones) and wideband (16 tones)
+   * Phone mode is stricter since we have fewer tones
    */
   private matchesLoosePatternForMode(symbols: number[], startIndex: number, maxTone: number): boolean {
     const s = symbols.slice(startIndex, startIndex + 8);
+    if (s.length < 8) return false;
 
-    // For phone (maxTone=7): calib ~[0,2,5,7]
-    // For wideband (maxTone=15): calib ~[0,5,10,15]
+    // Phone mode (maxTone=3): require exact calibration [0,1,2,3] and exact sync [0,3,0,3]
+    // Wideband mode (maxTone=15): allow more tolerance
+    const isPhoneMode = maxTone <= 7;
+
+    if (isPhoneMode) {
+      // Phone mode: exact calibration match required
+      const calibOk = s[0] === 0 && s[1] === 1 && s[2] === 2 && s[3] === 3;
+      // Phone mode: exact sync match required (alternating 0 and maxTone)
+      const syncOk = s[4] === 0 && s[5] === maxTone &&
+                     s[6] === 0 && s[7] === maxTone;
+      return calibOk && syncOk;
+    }
+
+    // Wideband mode: allow tolerance
     const quarter = Math.floor(maxTone / 4);
-    const half = Math.floor(maxTone / 2);
     const threeQuarter = Math.floor((maxTone * 3) / 4);
-    const tolerance = maxTone > 10 ? 2 : 1;
+    const tolerance = 2;
 
     // Check calibration part (first 4 symbols should be: low, ~quarter, ~3/4, high)
     const calibOk = s[0] <= tolerance &&
@@ -730,6 +809,65 @@ export class Decoder {
   // Track whether header was sent twice (for multi-frame messages)
   private headerRepeated = false;
 
+  /**
+   * Try to extract and decode header from a specific phase and offset
+   * Returns decoded header info if successful, null otherwise
+   */
+  private tryHeaderAtOffset(
+    phase: number,
+    syncFoundAt: number,
+    offset: number,
+    headerBytes: number,
+    headerSymbols: number
+  ): { header: HeaderInfo; correctedErrors: number; redundant: boolean } | null {
+    const symbols = this.phaseSymbols[phase];
+    const headerStart = syncFoundAt + offset;
+
+    if (headerStart < 0 || headerStart + headerSymbols > symbols.length) {
+      return null;
+    }
+
+    const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
+    const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
+    const bytes = deinterleave(
+      bytesRaw,
+      calculateInterleaverDepth(headerBytes),
+      headerBytes
+    );
+
+    // Try primary decode
+    let decodeResult = decodeHeaderFEC(bytes);
+
+    if (decodeResult.success) {
+      const header = parseHeaderFrame(decodeResult.data);
+      if (header && header.crcValid) {
+        return { header, correctedErrors: decodeResult.correctedErrors, redundant: false };
+      }
+    }
+
+    // Try with redundant copy if available
+    const symbols2Start = headerStart + headerSymbols;
+    if (symbols2Start + headerSymbols <= symbols.length) {
+      const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+      const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+      const bytes2 = deinterleave(
+        bytes2Raw,
+        calculateInterleaverDepth(headerBytes),
+        headerBytes
+      );
+
+      const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
+      if (decodeResult2.success) {
+        const header = parseHeaderFrame(decodeResult2.data);
+        if (header && header.crcValid) {
+          return { header, correctedErrors: decodeResult2.correctedErrors, redundant: true };
+        }
+      }
+    }
+
+    return null;
+  }
+
   private processHeader(): void {
     const symbols = this.phaseSymbols[this.bestPhase];
 
@@ -747,103 +885,66 @@ export class Decoder {
 
     console.log('[Decoder] Got enough symbols for header...');
 
-    // Extract header symbols
+    // Try header extraction with offset retries
+    // First try the detected position, then ±1, ±2 symbol offsets
+    const offsets = [0, -1, 1, -2, 2];
+
+    // Also try different phases if the primary phase fails
+    const phasesToTry = [this.bestPhase];
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (p !== this.bestPhase && this.phaseSymbols[p].length >= this.syncFoundAt + headerSymbols) {
+        phasesToTry.push(p);
+      }
+    }
+
+    for (const phase of phasesToTry) {
+      for (const offset of offsets) {
+        const result = this.tryHeaderAtOffset(phase, this.syncFoundAt, offset, headerBytes, headerSymbols);
+        if (result) {
+          if (offset !== 0 || phase !== this.bestPhase) {
+            console.log(`[Decoder] Header recovered with phase=${phase}, offset=${offset}`);
+          }
+          this.headerInfo = result.header;
+          this.headerRepeated = result.redundant || result.header.totalFrames > 1;
+          this.frameCollector.setHeader(result.header);
+          this.totalErrorsFixed += Math.max(0, result.correctedErrors);
+          this.consecutiveHeaderFailures = 0;
+          // Update best phase and sync position if different
+          if (phase !== this.bestPhase) {
+            this.bestPhase = phase;
+          }
+          if (offset !== 0) {
+            this.syncFoundAt += offset;
+          }
+          this.state = 'receiving_data';
+          this.lastDebugInfo = `Header OK${result.redundant ? ' (redundant)' : ''}! Frames: ${result.header.totalFrames}, Size: ${result.header.originalLength}`;
+          console.log('[Decoder] Header valid! Expecting', result.header.totalFrames, 'frames');
+          return;
+        }
+      }
+    }
+
+    // Log what we tried (for debugging)
     const headerStart = this.syncFoundAt;
     const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
-
     console.log('[Decoder] Header symbols (first 20):', headerSymbolsArr.slice(0, 20));
 
-    // Convert to bytes
     const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
-
-    // Deinterleave bytes (reverse of encoder interleaving)
     const bytes = deinterleave(
       bytesRaw,
       calculateInterleaverDepth(headerBytes),
       headerBytes
     );
-
     console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
-    console.log('[Decoder] Expected: [78, 49, ...] = "N1" magic');
+    console.log('[Decoder] Expected: [78, 51, ...] = "N3" magic (v3 protocol)');
 
-    // Try to decode header
-    let decodeResult = decodeHeaderFEC(bytes);
-
-    if (decodeResult.success) {
-      const header = parseHeaderFrame(decodeResult.data);
-      console.log('[Decoder] Parsed header:', header);
-
-      if (header && header.crcValid) {
-        // Check if this is a multi-frame message (header sent twice)
-        this.headerRepeated = header.totalFrames > 1;
-
-        if (this.headerRepeated && symbolsAfterSync >= headerSymbols * 2) {
-          // Try second copy for better reliability
-          const symbols2Start = headerStart + headerSymbols;
-          const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
-          const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
-          const bytes2 = deinterleave(
-            bytes2Raw,
-            calculateInterleaverDepth(headerBytes),
-            headerBytes
-          );
-
-          const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
-
-          if (decodeResult2.success) {
-            const header2 = parseHeaderFrame(decodeResult2.data);
-            if (header2 && header2.crcValid) {
-              console.log('[Decoder] Used redundant header copy');
-              decodeResult = decodeResult2;
-            }
-          }
-        }
-
-        this.headerInfo = header;
-        this.frameCollector.setHeader(header);
-        this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
-        this.consecutiveHeaderFailures = 0;  // Reset failure counter on success
-
-        this.state = 'receiving_data';
-        this.lastDebugInfo = `Header OK! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
-        console.log('[Decoder] Header valid! Expecting', header.totalFrames, 'frames');
-        return;
-      } else {
-        const reason = header ? 'CRC invalid' : 'Parse failed';
-        console.log('[Decoder] Header invalid:', reason);
-      }
-    } else {
-      console.log('[Decoder] Header FEC decode failed');
-
-      // If we have enough for second copy, try with redundancy
-      if (symbolsAfterSync >= headerSymbols * 2) {
-        const symbols2Start = headerStart + headerSymbols;
-        const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
-        const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
-        const bytes2 = deinterleave(
-          bytes2Raw,
-          calculateInterleaverDepth(headerBytes),
-          headerBytes
-        );
-
-        const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
-
-        if (decodeResult2.success) {
-          const header = parseHeaderFrame(decodeResult2.data);
-          if (header && header.crcValid) {
-            this.headerInfo = header;
-            this.headerRepeated = true;
-            this.frameCollector.setHeader(header);
-            this.totalErrorsFixed += Math.max(0, decodeResult2.correctedErrors);
-
-            this.state = 'receiving_data';
-            this.lastDebugInfo = `Header OK (redundant)! Frames: ${header.totalFrames}`;
-            console.log('[Decoder] Header valid from redundant copy!');
-            return;
-          }
-        }
-      }
+    // Check for v2 protocol magic
+    if (bytes[0] === 78 && bytes[1] === 49) {
+      console.warn('[Decoder] Detected v2 protocol (N1 magic)! Audio was encoded with old version.');
+      console.warn('[Decoder] Please regenerate audio with the updated encoder (v3 protocol).');
     }
+
+    console.log('[Decoder] Header FEC decode failed after trying', offsets.length * phasesToTry.length, 'combinations');
 
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;
@@ -904,6 +1005,11 @@ export class Decoder {
       this.lastDebugInfo = 'Header decode failed, retrying...';
     }
 
+    // Mark this sync position as failed to avoid retrying the same position
+    if (this.bestPhase >= 0 && this.syncFoundAt >= 0) {
+      this.markSyncPositionFailed(this.bestPhase, this.syncFoundAt);
+    }
+
     this.bestPhase = -1;
     this.syncFoundAt = -1;
 
@@ -936,7 +1042,7 @@ export class Decoder {
    * Matches encoder's packetize logic exactly
    */
   private getActualFramePayloadSize(frameIndex: number): number {
-    if (!this.headerInfo) return FRAME.PAYLOAD_SIZE;
+    if (!this.headerInfo) return FRAME_V3.PAYLOAD_SIZE;
 
     const frameSize = this.getOptimalFrameSize();
     const totalPayload = this.headerInfo.payloadLength;
@@ -987,6 +1093,9 @@ export class Decoder {
     const optimalFrameSize = this.getOptimalFrameSize();
     this.lastDebugInfo = `Data: ${framesAvailable}/${framesExpected} frames (${this.headerInfo.payloadLength}B total)`;
 
+    // Symbol offsets to try for data frames (timing jitter compensation)
+    const dataOffsets = [0, -1, 1, -2, 2, -3, 3];
+
     // Process any complete frames we haven't attempted yet
     for (let f = 0; f < framesAvailable && f < framesExpected; f++) {
       // Skip frames we've already attempted
@@ -995,53 +1104,148 @@ export class Decoder {
       // Calculate this frame's actual payload size
       const thisFramePayloadSize = this.getActualFramePayloadSize(f);
       const thisFrameEncodedBytes = getDataFrameSize(thisFramePayloadSize);
+      const frameSymCount = frameSymbolOffsets[f + 1] - frameSymbolOffsets[f];
 
       // Frame position from pre-calculated offsets
-      const frameStart = dataStart + frameSymbolOffsets[f];
-      const frameEnd = dataStart + frameSymbolOffsets[f + 1];
+      const baseFrameStart = dataStart + frameSymbolOffsets[f];
 
-      if (frameEnd > symbols.length) break;
+      // Try different offsets and phases
+      let decoded = false;
+
+      // First try the current phase with different offsets
+      for (const offset of dataOffsets) {
+        if (decoded) break;
+
+        const frameStart = baseFrameStart + offset;
+        const frameEnd = frameStart + frameSymCount;
+
+        if (frameStart < 0 || frameEnd > symbols.length) continue;
+
+        const frameSymbolsArr = symbols.slice(frameStart, frameEnd);
+        const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+        const frameBytes = deinterleave(
+          frameBytesRaw,
+          calculateInterleaverDepth(thisFrameEncodedBytes),
+          thisFrameEncodedBytes
+        );
+
+        if (offset === 0) {
+          console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
+          console.log('[Decoder] Expected: [68, ...] = "D" magic');
+        }
+
+        const decodeResult = decodeDataFEC(frameBytes, thisFramePayloadSize);
+
+        if (decodeResult.success) {
+          const frame = parseDataFrame(decodeResult.data);
+
+          if (frame && frame.crcValid) {
+            this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo.sessionId);
+            this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
+            this.failedDataFrames.delete(f);
+            decoded = true;
+
+            if (offset !== 0) {
+              console.log('[Decoder] Frame', f, 'recovered with offset', offset);
+            }
+            console.log('[Decoder] Frame', frame.frameIndex, 'OK, payload:', frame.payloadLength, 'bytes');
+            this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
+
+            if (this.frameCollector.isComplete()) {
+              this.finalizeDecoding();
+              return;
+            }
+            break;
+          }
+        }
+      }
+
+      // If still not decoded, try other phases with offsets
+      if (!decoded) {
+        for (let phase = 0; phase < NUM_PHASES && !decoded; phase++) {
+          if (phase === this.bestPhase) continue;
+          const phaseSymbols = this.phaseSymbols[phase];
+          if (phaseSymbols.length < baseFrameStart + frameSymCount) continue;
+
+          for (const offset of dataOffsets) {
+            if (decoded) break;
+
+            const frameStart = baseFrameStart + offset;
+            const frameEnd = frameStart + frameSymCount;
+
+            if (frameStart < 0 || frameEnd > phaseSymbols.length) continue;
+
+            const frameSymbolsArr = phaseSymbols.slice(frameStart, frameEnd);
+            const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+            const frameBytes = deinterleave(
+              frameBytesRaw,
+              calculateInterleaverDepth(thisFrameEncodedBytes),
+              thisFrameEncodedBytes
+            );
+
+            const decodeResult = decodeDataFEC(frameBytes, thisFramePayloadSize);
+
+            if (decodeResult.success) {
+              const frame = parseDataFrame(decodeResult.data);
+
+              if (frame && frame.crcValid) {
+                this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo.sessionId);
+                this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
+                this.failedDataFrames.delete(f);
+                decoded = true;
+
+                console.log('[Decoder] Frame', f, 'recovered with phase', phase, 'offset', offset);
+                console.log('[Decoder] Frame', frame.frameIndex, 'OK, payload:', frame.payloadLength, 'bytes');
+                this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
+
+                if (this.frameCollector.isComplete()) {
+                  this.finalizeDecoding();
+                  return;
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
 
       this.framesAttempted.add(f);
 
-      const frameSymbolsArr = symbols.slice(frameStart, frameEnd);
-      const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
+      if (!decoded) {
+        console.log('[Decoder] Frame', f, 'FEC failed after trying', dataOffsets.length * NUM_PHASES, 'combinations');
+        this.failedDataFrames.add(f);
+        this.lastDebugInfo = `Frame ${f} FEC failed - signal issues`;
+      }
+    }
 
-      // Deinterleave frame bytes (reverse of encoder interleaving)
-      const frameBytes = deinterleave(
-        frameBytesRaw,
-        calculateInterleaverDepth(thisFrameEncodedBytes),
-        thisFrameEncodedBytes
-      );
+    // Check for timeout: if we have significantly more symbols than expected but still can't decode
+    const totalExpectedSymbols = frameSymbolOffsets[framesExpected];
+    const symbolsWithBuffer = Math.floor(totalExpectedSymbols * Decoder.SYMBOL_BUFFER_RATIO);
 
-      console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
-      console.log('[Decoder] Expected: [68, ...] = "D" magic');
+    if (symbolsAvailable >= symbolsWithBuffer) {
+      // We have enough symbols (with buffer) - check if all frames have been attempted and failed
+      const allFramesAttempted = this.framesAttempted.size >= framesExpected;
+      const successfulFrames = this.frameCollector.getReceivedCount();
+      const failedFrames = this.failedDataFrames.size;
 
-      // Decode FEC (pass expected payload size for Viterbi decoding)
-      const decodeResult = decodeDataFEC(frameBytes, thisFramePayloadSize);
+      if (allFramesAttempted && successfulFrames === 0 && failedFrames > 0) {
+        // All frames attempted, none successful - fail
+        console.error('[Decoder] All data frame decodes failed. Expected:', totalExpectedSymbols, 'symbols, received:', symbolsAvailable);
+        this.state = 'error';
+        this.lastDebugInfo = 'Data decode failed - signal too weak or corrupted. Try moving closer.';
+        this.updateProgress();
 
-      if (decodeResult.success) {
-        const frame = parseDataFrame(decodeResult.data);
-
-        if (frame && frame.crcValid) {
-          this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo.sessionId);
-          this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
-
-          console.log('[Decoder] Frame', frame.frameIndex, 'OK, payload:', frame.payloadLength, 'bytes');
-          this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
-
-          // Check if complete
-          if (this.frameCollector.isComplete()) {
-            this.finalizeDecoding();
-            return;
-          }
-        } else {
-          console.log('[Decoder] Frame', f, 'parse failed');
-          this.lastDebugInfo = `Frame ${f} parse failed`;
+        if (this.onError) {
+          this.onError(new Error('Failed to decode data frames. The signal may be too weak or corrupted.'));
         }
-      } else {
-        console.log('[Decoder] Frame', f, 'FEC failed');
-        this.lastDebugInfo = `Frame ${f} FEC failed - waiting for more data`;
+        return;
+      }
+
+      // Some frames successful but not complete - partial decode
+      if (allFramesAttempted && successfulFrames > 0 && successfulFrames < framesExpected) {
+        console.warn('[Decoder] Partial decode:', successfulFrames, '/', framesExpected, 'frames');
+        // Continue waiting a bit more, but update status
+        this.lastDebugInfo = `Partial: ${successfulFrames}/${framesExpected} frames - signal issues`;
       }
     }
   }
@@ -1152,7 +1356,7 @@ export class Decoder {
       this.pendingPayload = null;  // Clear pending payload on success
       this.updateProgress();
 
-      console.log('[Decoder] Complete! Data length:', data.length);
+      // Use console.error for CLI compatibility (avoids stdout pollution)
 
       this.onComplete?.({
         data,
@@ -1184,6 +1388,7 @@ export class Decoder {
     this.bestPhase = -1;
     this.syncFoundAt = -1;
     this.framesAttempted = new Set();
+    this.failedDataFrames.clear();
     this.headerRepeated = false;
     this.detectedAudioMode = null;
     this.chirpDetected = false;

@@ -66,6 +66,10 @@ export async function startRecording(callbacks: RecorderCallbacks): Promise<void
     // Create source from microphone
     sourceNode = ctx.createMediaStreamSource(mediaStream);
 
+    // Create input gain node to amplify weak signals (2x boost)
+    const inputGainNode = ctx.createGain();
+    inputGainNode.gain.value = 2.0;
+
     // Create analyser for level metering
     analyserNode = ctx.createAnalyser();
     analyserNode.fftSize = 2048;
@@ -95,8 +99,9 @@ export async function startRecording(callbacks: RecorderCallbacks): Promise<void
       }
     };
 
-    // Connect nodes: source -> analyser -> processor -> destination (muted)
-    sourceNode.connect(analyserNode);
+    // Connect nodes: source -> inputGain(2x) -> analyser -> processor -> destination (muted)
+    sourceNode.connect(inputGainNode);
+    inputGainNode.connect(analyserNode);
     analyserNode.connect(processorNode);
 
     // Connect to destination but with zero gain (needed to keep processor running)
