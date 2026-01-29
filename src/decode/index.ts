@@ -109,6 +109,14 @@ export class Decoder {
 
   // Header failure detection
   private consecutiveHeaderFailures = 0;
+
+  // Timeout detection
+  private syncDetectedTime = 0;           // Timestamp when sync was found
+  private headerDecodedTime = 0;          // Timestamp when header was decoded
+  private expectedEndTime = 0;            // Expected transmission end time
+  private lastHighEnergyTime = 0;         // Last time we saw significant audio energy
+  private static readonly SILENCE_TIMEOUT_MS = 4000;    // 4 seconds of silence triggers timeout
+  private static readonly ENERGY_THRESHOLD = 0.02;      // Below this is considered silence
   private static readonly MAX_HEADER_FAILURES = 5;  // After this many failures, warn user
   private static readonly FATAL_HEADER_FAILURES = 15; // After this many, give up and show error
   private modeRetryAttempted = false; // Track if we've tried the other mode
@@ -256,8 +264,10 @@ export class Decoder {
     this.password = null;
     this.pendingPayload = null;
     this.consecutiveHeaderFailures = 0;
-    this.failedSyncPositions.clear();
-    this.headerOffsetRetries = 0;
+    this.syncDetectedTime = 0;
+    this.headerDecodedTime = 0;
+    this.expectedEndTime = 0;
+    this.lastHighEnergyTime = 0;
 
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
@@ -274,6 +284,31 @@ export class Decoder {
     const signalLevel = Math.min(100, energy * 200);
 
     this.progress.value = { ...this.progress.value, signalLevel };
+
+    // Track energy for silence detection
+    const now = Date.now();
+    if (energy > Decoder.ENERGY_THRESHOLD) {
+      this.lastHighEnergyTime = now;
+    }
+
+    // Check for timeouts (only after sync is detected)
+    if (this.syncDetectedTime > 0) {
+      // Silence detection: if no significant audio for 4 seconds after sync
+      if (this.lastHighEnergyTime > 0 && (now - this.lastHighEnergyTime) > Decoder.SILENCE_TIMEOUT_MS) {
+        const silenceDuration = ((now - this.lastHighEnergyTime) / 1000).toFixed(1);
+        console.log(`[Decoder] Silence timeout: ${silenceDuration}s of silence detected`);
+        this.handleTimeoutError(`Transmission ended (${silenceDuration}s silence). No complete message received.`);
+        return;
+      }
+
+      // Expected duration timeout: if we've exceeded expected transmission time by 50%
+      if (this.expectedEndTime > 0 && now > this.expectedEndTime) {
+        const elapsed = ((now - this.headerDecodedTime) / 1000).toFixed(1);
+        console.log(`[Decoder] Duration timeout: expected end time exceeded (${elapsed}s elapsed)`);
+        this.handleTimeoutError(`Transmission taking too long (${elapsed}s). Expected ${this.headerInfo?.totalFrames || '?'} frames.`);
+        return;
+      }
+    }
 
     // Add samples to buffer
     for (let i = 0; i < samples.length; i++) {
@@ -504,6 +539,8 @@ export class Decoder {
           this.syncFoundAt = startIdx + fullPattern.length;
           this.detectedAudioMode = mode;
           this.state = 'receiving_header';
+          this.syncDetectedTime = Date.now();
+          this.lastHighEnergyTime = Date.now();  // Reset silence timer
 
           setAudioMode(mode);
           this.updateSymbolTiming();
@@ -591,6 +628,10 @@ export class Decoder {
             this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
             this.detectedAudioMode = mode;
+            this.syncDetectedTime = Date.now();
+            this.lastHighEnergyTime = Date.now();  // Reset silence timer
+
+            // Set the audio mode globally
             setAudioMode(mode);
             this.updateSymbolTiming();
 
@@ -621,6 +662,9 @@ export class Decoder {
               this.syncFoundAt = syncPos;
               this.state = 'receiving_header';
               this.detectedAudioMode = mode;
+              this.syncDetectedTime = Date.now();
+              this.lastHighEnergyTime = Date.now();  // Reset silence timer
+
               setAudioMode(mode);
               this.updateSymbolTiming();
 
@@ -655,6 +699,9 @@ export class Decoder {
             this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
             this.detectedAudioMode = mode;
+            this.syncDetectedTime = Date.now();
+            this.lastHighEnergyTime = Date.now();  // Reset silence timer
+
             setAudioMode(mode);
             this.updateSymbolTiming();
 
@@ -806,6 +853,38 @@ export class Decoder {
     return Math.ceil((byteCount * 8) / bitsPerSymbol);
   }
 
+  /**
+   * Calculate expected end time based on number of frames
+   * Returns timestamp when transmission should be complete (with 50% buffer)
+   */
+  private calculateExpectedEndTime(totalFrames: number): number {
+    // Symbol duration in ms (including guard)
+    const symbolDurationMs = AUDIO.SYMBOL_DURATION_MS + AUDIO.GUARD_INTERVAL_MS;
+
+    // Estimate symbols per frame (assuming max frame size for safety)
+    const frameBytes = 3 + FRAME_V3.PAYLOAD_SIZE + FRAME_V3.RS_PARITY_SIZE; // ~147 bytes
+    const symbolsPerFrame = this.calculateSymbolsForBytes(frameBytes);
+
+    // Total data symbols
+    const dataSymbols = totalFrames * symbolsPerFrame;
+
+    // Add header symbols (with redundancy)
+    const headerBytes = FRAME_V3.HEADER_SIZE + FRAME_V3.RS_PARITY_SIZE;
+    const headerSymbols = this.calculateSymbolsForBytes(headerBytes) * 2; // Header sent twice
+
+    // Total estimated duration in ms
+    const totalSymbols = dataSymbols + headerSymbols;
+    const estimatedDurationMs = totalSymbols * symbolDurationMs;
+
+    // Add 50% buffer for timing variations
+    const bufferMultiplier = 1.5;
+    const expectedDurationMs = estimatedDurationMs * bufferMultiplier;
+
+    console.log(`[Decoder] Expected duration: ${(expectedDurationMs / 1000).toFixed(1)}s for ${totalFrames} frames`);
+
+    return Date.now() + expectedDurationMs;
+  }
+
   // Track whether header was sent twice (for multi-frame messages)
   private headerRepeated = false;
 
@@ -938,10 +1017,91 @@ export class Decoder {
     console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
     console.log('[Decoder] Expected: [78, 51, ...] = "N3" magic (v3 protocol)');
 
-    // Check for v2 protocol magic
-    if (bytes[0] === 78 && bytes[1] === 49) {
-      console.warn('[Decoder] Detected v2 protocol (N1 magic)! Audio was encoded with old version.');
-      console.warn('[Decoder] Please regenerate audio with the updated encoder (v3 protocol).');
+    // Try to decode header
+    let decodeResult = decodeHeaderFEC(bytes);
+
+    if (decodeResult.success) {
+      const header = parseHeaderFrame(decodeResult.data);
+      console.log('[Decoder] Parsed header:', header);
+
+      if (header && header.crcValid) {
+        // Check if this is a multi-frame message (header sent twice)
+        this.headerRepeated = header.totalFrames > 1;
+
+        if (this.headerRepeated && symbolsAfterSync >= headerSymbols * 2) {
+          // Try second copy for better reliability
+          const symbols2Start = headerStart + headerSymbols;
+          const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+          const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+          const bytes2 = deinterleave(
+            bytes2Raw,
+            calculateInterleaverDepth(headerBytes),
+            headerBytes
+          );
+
+          const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
+
+          if (decodeResult2.success) {
+            const header2 = parseHeaderFrame(decodeResult2.data);
+            if (header2 && header2.crcValid) {
+              console.log('[Decoder] Used redundant header copy');
+              decodeResult = decodeResult2;
+            }
+          }
+        }
+
+        this.headerInfo = header;
+        this.frameCollector.setHeader(header);
+        this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
+        this.consecutiveHeaderFailures = 0;  // Reset failure counter on success
+
+        // Set expected duration timeout
+        this.headerDecodedTime = Date.now();
+        this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+
+        this.state = 'receiving_data';
+        this.lastDebugInfo = `Header OK! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
+        console.log('[Decoder] Header valid! Expecting', header.totalFrames, 'frames');
+        return;
+      } else {
+        const reason = header ? 'CRC invalid' : 'Parse failed';
+        console.log('[Decoder] Header invalid:', reason);
+      }
+    } else {
+      console.log('[Decoder] Header FEC decode failed');
+
+      // If we have enough for second copy, try with redundancy
+      if (symbolsAfterSync >= headerSymbols * 2) {
+        const symbols2Start = headerStart + headerSymbols;
+        const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
+        const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
+        const bytes2 = deinterleave(
+          bytes2Raw,
+          calculateInterleaverDepth(headerBytes),
+          headerBytes
+        );
+
+        const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
+
+        if (decodeResult2.success) {
+          const header = parseHeaderFrame(decodeResult2.data);
+          if (header && header.crcValid) {
+            this.headerInfo = header;
+            this.headerRepeated = true;
+            this.frameCollector.setHeader(header);
+            this.totalErrorsFixed += Math.max(0, decodeResult2.correctedErrors);
+
+            // Set expected duration timeout
+            this.headerDecodedTime = Date.now();
+            this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+
+            this.state = 'receiving_data';
+            this.lastDebugInfo = `Header OK (redundant)! Frames: ${header.totalFrames}`;
+            console.log('[Decoder] Header valid from redundant copy!');
+            return;
+          }
+        }
+      }
     }
 
     console.log('[Decoder] Header FEC decode failed after trying', offsets.length * phasesToTry.length, 'combinations');
@@ -1394,6 +1554,11 @@ export class Decoder {
     this.chirpDetected = false;
     this.chirpEndSample = -1;
     this.chirpDetector.reset();
+    // Reset timeout tracking
+    this.syncDetectedTime = 0;
+    this.headerDecodedTime = 0;
+    this.expectedEndTime = 0;
+    // Keep lastHighEnergyTime - we still want to track silence
     this.state = 'detecting_preamble';
     this.lastDebugInfo = 'Restarting detection... Play audio again';
     this.updateProgress();
@@ -1415,6 +1580,22 @@ export class Decoder {
       errorMessage: error.message,
     };
     this.onError?.(error);
+  }
+
+  /**
+   * Handle timeout errors (silence or duration exceeded)
+   * These are non-recoverable - stop listening and show error
+   */
+  private handleTimeoutError(message: string): void {
+    console.log('[Decoder] Timeout:', message);
+    this.state = 'error';
+    this.lastDebugInfo = message;
+    this.progress.value = {
+      ...this.progress.value,
+      state: 'error',
+      errorMessage: message,
+    };
+    this.onError?.(new Error(message));
   }
 
   /**
