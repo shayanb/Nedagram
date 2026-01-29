@@ -123,11 +123,11 @@ export function Help() {
           <p class="commands-title">CLI Usage (from extracted folder)</p>
           <CommandBlock label="Encode" command='node cli/index.cjs encode "Hello World" -o message.wav' />
           <CommandBlock label="Decode" command="node cli/index.cjs decode message.wav" />
-          <CommandBlock label="Help" command='node cli/index.cjs --help' />
+          <CommandBlock label="Install from npm" command='npm install -g nedagram' />
         </div>
 
         <p class="mode-note">
-          Or install globally: <code>npm install -g @nedagram/nedagram</code> then use <code>nedagram</code> command directly.
+          For help <code>node cli/index.cjs --help</code> or use <code>nedagram --help</code> command directly.
           Use <code>--json</code> for machine-readable output.
         </p>
       </section>
