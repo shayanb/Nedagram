@@ -26,8 +26,11 @@ Nedagram faces different challenges than traditional modems:
 | **Frequency Range** | 980-1850 Hz | 1200-2400 Hz | 800-2300 Hz | 1800-5700 Hz |
 | **Tone/Carrier Spacing** | 200 Hz | N/A (phase-based) | 500 Hz | 260 Hz |
 | **Symbol Duration** | 3.3 ms | 1.67 ms | 62 ms (50+12 guard) | 45 ms (40+5 guard) |
-| **Error Correction** | None | None | RS(144,128) | RS(144,128) |
-| **Error Tolerance** | 0 bytes | 0 bytes | 8 bytes/frame | 8 bytes/frame |
+| **Error Correction** | None | None | Concatenated FEC | Concatenated FEC |
+| **Outer Code** | N/A | N/A | RS(n, n-16) | RS(n, n-16) |
+| **Inner Code** | N/A | N/A | Conv k=7, rate 2/3 | Conv k=7, rate 2/3 |
+| **Scrambling** | None | LFSR | LFSR (x^15+x^14+1) | LFSR (x^15+x^14+1) |
+| **Error Tolerance** | 0 bytes | 0 bytes | ~8 bytes + bit errors | ~8 bytes + bit errors |
 | **Synchronization** | Continuous | Training sequence | Chirp + calibration | Chirp + calibration |
 | **Duplex Mode** | Full | Full | Simplex | Simplex |
 
@@ -127,16 +130,33 @@ Traditional modems have no guard intervals because PSTN timing was stable. Moder
 
 Guard intervals prevent inter-symbol interference when timing varies.
 
-### Reed-Solomon FEC
+### Concatenated FEC (v3 Protocol)
 
 V.21 and V.22 have **no error correction**. They relied on:
 - Relatively clean phone lines
 - Ability to request retransmission (ARQ protocols at higher layers)
 
-Nedagram cannot request retransmission (simplex broadcast), so FEC is essential:
-- RS(144, 128): 16 parity bytes per frame
-- Can correct up to 8 byte errors per frame
-- Block interleaving spreads burst errors across frames
+Nedagram cannot request retransmission (simplex broadcast), so FEC is essential. The v3 protocol uses **concatenated coding** (same approach as Voyager spacecraft):
+
+**Outer Code: Reed-Solomon**
+- 16 parity bytes per frame
+- Corrects up to 8 byte errors per frame
+- Handles burst errors after Viterbi decoding
+
+**Inner Code: Convolutional**
+- Constraint length k=7 (64 states)
+- Generator polynomials: G1=0x6D, G2=0x4F
+- Punctured from rate 1/2 to rate 2/3 (1.5x expansion)
+- Soft-decision Viterbi decoding with 35-symbol traceback
+
+**Scrambling**
+- LFSR polynomial: x^15 + x^14 + 1
+- Ensures good bit distribution for convolutional encoder
+- Prevents long runs of identical symbols
+
+**Block Interleaving**
+- Spreads burst errors across the frame
+- Depth calculated based on frame size
 
 ### Chirp Synchronization
 
@@ -164,26 +184,40 @@ Traditional modems use continuous carrier tracking or training sequences. Nedagr
 
 ---
 
-## Potential Improvements from Modem Research
+## Implemented Improvements from Modem Research
 
-The following techniques from V.21/V.22 could enhance Nedagram:
+The following techniques from V.21/V.22 have been implemented in Nedagram v3:
 
-### 1. Scrambling
+### 1. Scrambling ✅ Implemented
 V.22 uses an LFSR scrambler to ensure regular symbol transitions. Benefits:
 - Better timing recovery (guaranteed edges)
 - DC balance (prevents speaker/mic coupling issues)
 - More uniform spectrum
 
-### 2. Soft-Decision Decoding
-Instead of hard symbol decisions, pass confidence values to FEC decoder:
-- Current: "Symbol is definitely 3"
-- Soft: "Symbol is 80% likely 3, 15% likely 2"
-- Enables more powerful error correction
+**Implementation**: LFSR with polynomial x^15 + x^14 + 1, fixed seed 0x4A80
 
-### 3. Frequency Offset Tracking
+### 2. Soft-Decision Decoding ✅ Implemented
+Instead of hard symbol decisions, pass confidence values to FEC decoder:
+- Previous: "Symbol is definitely 3"
+- Now: "Symbol is 80% likely 3, 15% likely 2"
+- Enables more powerful error correction via Viterbi algorithm
+
+**Implementation**: Viterbi decoder accepts soft values (0.0-1.0), uses path metrics for optimal decoding
+
+### 3. Convolutional Coding ✅ Implemented
+Inner convolutional code catches bit errors before they become byte errors for RS:
+- Constraint length k=7 (same as Voyager, CDMA, WiFi)
+- Rate 1/2 base, punctured to 2/3 for efficiency
+- Soft-decision Viterbi with 35-symbol traceback
+
+### 4. Frequency Offset Tracking ✅ Implemented
 Codecs and analog paths can shift frequencies by ±10-20 Hz. Track and compensate during decoding.
 
-### 4. Adaptive Mode Selection
+**Implementation**: FrequencyOffsetTracker estimates offset during calibration tones, compensates in detection
+
+## Future Improvements
+
+### Adaptive Mode Selection
 Detect channel quality during preamble and automatically select optimal parameters.
 
 ---
@@ -197,5 +231,39 @@ Detect channel quality during preamble and automatically select optimal paramete
 
 ---
 
+## Summary of v3 Protocol Changes
+
+The v3 protocol represents a significant upgrade to Nedagram's error correction capabilities, inspired by ITU modem research and proven space communication techniques:
+
+| Feature | Previous (v2) | Current (v3) |
+|---------|---------------|--------------|
+| **FEC Structure** | RS only | Concatenated RS + Convolutional |
+| **Inner Code** | None | Conv k=7, rate 2/3 (punctured) |
+| **Outer Code** | RS(n, n-16) | RS(n, n-16) (unchanged) |
+| **Scrambling** | None | LFSR x^15 + x^14 + 1 |
+| **Decoding** | Hard-decision | Soft-decision Viterbi |
+| **Magic Bytes** | "N1" | "N3" |
+| **Overhead** | ~12.5% (RS) | ~25% (RS + Conv) |
+| **Error Capability** | 8 bytes/frame | 8+ bytes + bit errors |
+
+### Key Benefits
+
+1. **Better Bit Error Handling**: Convolutional code catches random bit errors before they accumulate into byte errors
+2. **Soft-Decision Gains**: ~2-3 dB improvement over hard-decision decoding
+3. **Improved Burst Error Tolerance**: Scrambling + interleaving spreads burst errors
+4. **Same Frame Format**: Header structure unchanged, only encoding differs
+
+### Why Concatenated Coding?
+
+This is the same approach used by:
+- **Voyager spacecraft** (1977) - Still communicating from interstellar space
+- **Mars rovers** - Deep space communication
+- **CDMA cellular** - Mobile phone standards
+- **DVB/WiFi** - Digital broadcasting and wireless networking
+
+The combination of a convolutional inner code (good at random errors) with an RS outer code (good at burst errors) provides robust protection against the mixed error patterns typical of audio transmission.
+
+---
+
 *Document created: January 2026*
-*Nedagram version: 2.8.x*
+*Nedagram version: 3.0 (v3 protocol)*

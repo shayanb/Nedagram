@@ -201,13 +201,22 @@ export function Help() {
           <dd>~50-60 bps</dd>
         </dl>
 
-        <h4>Error Correction (Reed-Solomon)</h4>
+        <h4>Error Correction (Concatenated FEC)</h4>
         <dl class="spec-list">
-          <dt>Parity Bytes</dt>
-          <dd>16 bytes per frame</dd>
+          <dt>Outer Code</dt>
+          <dd>Reed-Solomon with 16 parity bytes</dd>
+
+          <dt>Inner Code</dt>
+          <dd>Convolutional (k=7, rate 2/3 punctured)</dd>
+
+          <dt>Decoding</dt>
+          <dd>Soft-decision Viterbi with 35-symbol traceback</dd>
+
+          <dt>Scrambling</dt>
+          <dd>LFSR (x^15 + x^14 + 1) for bit distribution</dd>
 
           <dt>Error Correction</dt>
-          <dd>Up to 8 byte errors per frame</dd>
+          <dd>~8 byte errors + additional bit errors per frame</dd>
         </dl>
 
         <h4>Synchronization (Phone Mode)</h4>
@@ -261,7 +270,7 @@ export function Help() {
         <h4>Common Settings</h4>
         <dl class="spec-list">
           <dt>Header Format</dt>
-          <dd>12 bytes compact (N1 magic, CRC16)</dd>
+          <dd>12 bytes compact (N3 magic, CRC16)</dd>
 
           <dt>Compression</dt>
           <dd>DEFLATE (automatic)</dd>
@@ -273,7 +282,7 @@ export function Help() {
           <dd>100 KB</dd>
 
           <dt>Protocol Version</dt>
-          <dd>2.0 (Compact)</dd>
+          <dd>3.0 (Concatenated FEC)</dd>
         </dl>
       </section>
 

@@ -53,7 +53,7 @@ Nedagram was built to help share text data when sending files isn't possible. By
 - **Two Audio Modes**
   - **Phone Mode** - Works over standard phone calls (300-3400 Hz)
   - **Wideband Mode** - Faster transmission for direct device-to-device or HD Voice
-- **Error Correction** - Reed-Solomon FEC with 16 parity bytes per frame
+- **Error Correction** - Concatenated FEC (Reed-Solomon + Convolutional with Viterbi decoding)
 - **Auto-Detection** - Receiver automatically detects transmission mode
 - **Compression** - DEFLATE compression reduces transmission time
 - **Integrity Verification** - SHA-256 checksum for sender/receiver verification
@@ -116,11 +116,14 @@ Share configuration files, complex passwords, or long URLs via:
 | Symbol Duration | 40ms + 5ms guard |
 | Effective Bitrate | ~50-60 bps |
 
-### Error Correction (Reed-Solomon)
+### Error Correction (Concatenated FEC)
 | Parameter | Value |
 |-----------|-------|
-| Parity Bytes | 16 per frame |
-| Error Correction | Up to 8 bytes/frame |
+| Outer Code | Reed-Solomon with 16 parity bytes |
+| Inner Code | Convolutional (k=7, rate 2/3 punctured) |
+| Viterbi Decoding | Soft-decision, 35-symbol traceback |
+| Scrambling | LFSR (x^15 + x^14 + 1) for bit distribution |
+| Error Correction | ~8 byte errors + additional bit errors per frame |
 
 ### Synchronization
 | Component | Phone Mode | Wideband Mode |
@@ -314,7 +317,7 @@ npm run test:cli
 - **State**: Preact Signals
 - **Compression**: pako (DEFLATE)
 - **Encryption**: @noble/ciphers (ChaCha20-Poly1305)
-- **Error Correction**: Custom Reed-Solomon implementation
+- **Error Correction**: Concatenated FEC (Reed-Solomon + Convolutional/Viterbi)
 - **PWA**: Service Worker with offline caching
 
 ## Privacy & Security
