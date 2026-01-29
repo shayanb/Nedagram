@@ -117,6 +117,9 @@ Share configuration files, complex passwords, or long URLs via:
 | Effective Bitrate | ~50-60 bps |
 
 ### Error Correction (Concatenated FEC)
+
+*Same scheme used by NASA's Voyager spacecraft for reliable deep space communication.*
+
 | Parameter | Value |
 |-----------|-------|
 | Outer Code | Reed-Solomon with 16 parity bytes |

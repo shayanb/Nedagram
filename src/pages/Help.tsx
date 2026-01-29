@@ -202,6 +202,7 @@ export function Help() {
         </dl>
 
         <h4>Error Correction (Concatenated FEC)</h4>
+        <p class="mode-note">Same scheme used by NASA's Voyager spacecraft for deep space communication.</p>
         <dl class="spec-list">
           <dt>Outer Code</dt>
           <dd>Reed-Solomon with 16 parity bytes</dd>
