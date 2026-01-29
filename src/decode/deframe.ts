@@ -16,7 +16,8 @@
  *   [2]    Payload length (1 byte, actual data in this frame)
  *   [3..n] Payload (variable, no padding)
  */
-import { FRAME } from '../utils/constants';
+import { FRAME, FRAME_V3 } from '../utils/constants';
+import { ProtocolVersion } from '../encode/frame';
 import { readUint16LE, bytesToString } from '../utils/helpers';
 
 // Flag bits (must match encode/frame.ts)
@@ -35,6 +36,8 @@ export interface HeaderInfo {
   compressed: boolean;
   encrypted: boolean;
   crcValid: boolean;
+  /** Protocol version detected from magic bytes */
+  protocolVersion: ProtocolVersion;
 }
 
 export interface DataFrameInfo {
@@ -62,8 +65,10 @@ function crc16(data: Uint8Array): number {
 }
 
 /**
- * Parse compact header frame (after RS decoding)
+ * Parse compact header frame (after RS/Viterbi decoding)
  * Input: 12-byte header
+ *
+ * Recognizes both v2 (magic "N1") and v3 (magic "N3") headers
  */
 export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
   if (frame.length < FRAME.HEADER_SIZE) {
@@ -71,10 +76,16 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
     return null;
   }
 
-  // Check magic "N1"
+  // Check magic - accept both "N1" (v2) and "N3" (v3)
   const magic = bytesToString(frame.subarray(0, 2));
-  if (magic !== FRAME.HEADER_MAGIC) {
-    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME.HEADER_MAGIC);
+  let protocolVersion: ProtocolVersion;
+
+  if (magic === FRAME.HEADER_MAGIC) {
+    protocolVersion = 'v2';
+  } else if (magic === FRAME_V3.HEADER_MAGIC) {
+    protocolVersion = 'v3';
+  } else {
+    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME.HEADER_MAGIC, 'or', FRAME_V3.HEADER_MAGIC);
     return null;
   }
 
@@ -104,6 +115,7 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
     compressed: (flags & FLAG_COMPRESSED) !== 0,
     encrypted: (flags & FLAG_ENCRYPTED) !== 0,
     crcValid,
+    protocolVersion,
   };
 }
 

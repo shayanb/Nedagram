@@ -17,7 +17,10 @@
  *   [3..n] Payload (variable, no padding)
  *   No CRC - RS handles error detection
  */
-import { FRAME } from '../utils/constants';
+import { FRAME, FRAME_V3 } from '../utils/constants';
+
+/** Protocol version type */
+export type ProtocolVersion = 'v2' | 'v3';
 import { crc32 } from '../lib/crc32';
 import {
   writeUint16LE,
@@ -64,6 +67,14 @@ export const FLAG_ENCRYPTED = 0x02;   // bit 1: data is encrypted
 
 /**
  * Create a compact header frame (12 bytes)
+ *
+ * @param totalFrames - Number of data frames
+ * @param payloadLength - Compressed/encrypted payload length
+ * @param originalLength - Original uncompressed length
+ * @param compressed - Whether data is compressed
+ * @param encrypted - Whether data is encrypted
+ * @param sessionId - Optional session ID (auto-generated if not provided)
+ * @param protocolVersion - Protocol version ('v2' or 'v3')
  */
 export function createHeaderFrame(
   totalFrames: number,
@@ -71,19 +82,21 @@ export function createHeaderFrame(
   originalLength: number,
   compressed: boolean,
   encrypted: boolean = false,
-  sessionId?: number
+  sessionId?: number,
+  protocolVersion: ProtocolVersion = 'v2'
 ): { frame: Uint8Array; sessionId: number } {
+  const frameConfig = protocolVersion === 'v3' ? FRAME_V3 : FRAME;
   const sid = sessionId ?? (generateSessionId() & 0xFFFF); // 16-bit session ID
-  const frame = new Uint8Array(FRAME.HEADER_SIZE);
+  const frame = new Uint8Array(frameConfig.HEADER_SIZE);
 
-  // Magic "N1"
-  frame.set(stringToBytes(FRAME.HEADER_MAGIC), 0);
+  // Magic ("N1" for v2, "N3" for v3)
+  frame.set(stringToBytes(frameConfig.HEADER_MAGIC), 0);
 
   // Version (high 4 bits) + Flags (low 4 bits)
   let flags = 0;
   if (compressed) flags |= FLAG_COMPRESSED;
   if (encrypted) flags |= FLAG_ENCRYPTED;
-  const versionFlags = ((FRAME.CURRENT_VERSION & 0x0F) << 4) | (flags & 0x0F);
+  const versionFlags = ((frameConfig.CURRENT_VERSION & 0x0F) << 4) | (flags & 0x0F);
   frame[2] = versionFlags;
 
   // Total frames (1 byte)
@@ -144,12 +157,19 @@ function getOptimalFrameSize(totalPayload: number): number {
 
 /**
  * Packetize payload data into frames
+ *
+ * @param payload - Payload data to packetize
+ * @param originalLength - Original uncompressed length
+ * @param compressed - Whether data is compressed
+ * @param encrypted - Whether data is encrypted
+ * @param protocolVersion - Protocol version ('v2' or 'v3')
  */
 export function packetize(
   payload: Uint8Array,
   originalLength: number,
   compressed: boolean,
-  encrypted: boolean = false
+  encrypted: boolean = false,
+  protocolVersion: ProtocolVersion = 'v2'
 ): { headerFrame: Uint8Array; dataFrames: Uint8Array[]; sessionId: number } {
   // Use optimal frame size based on payload
   const frameSize = getOptimalFrameSize(payload.length);
@@ -157,13 +177,15 @@ export function packetize(
   // Calculate number of data frames needed
   const totalDataFrames = Math.ceil(payload.length / frameSize);
 
-  // Create header frame
+  // Create header frame with appropriate protocol version
   const { frame: headerFrame, sessionId } = createHeaderFrame(
     totalDataFrames,
     payload.length,
     originalLength,
     compressed,
-    encrypted
+    encrypted,
+    undefined,
+    protocolVersion
   );
 
   // Create data frames with minimal overhead
