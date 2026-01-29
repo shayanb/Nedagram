@@ -17,6 +17,7 @@ import './Send.css';
 
 type SendState = 'idle' | 'encoding' | 'ready' | 'playing';
 
+// Global signals - persist across navigation
 const sendState = signal<SendState>('idle');
 const encodeResult = signal<EncodeResult | null>(null);
 const errorMessage = signal<string | null>(null);
@@ -24,28 +25,30 @@ const playbackProgress = signal<number>(0);
 const audioMode = signal<AudioMode>(getAudioMode());
 const isResultStale = signal(false);
 
+// Input state - persists across navigation
+const inputText = signal('');
+const fileName = signal<string | null>(null);
+const encryptEnabled = signal(false);
+const password = signal('');
+
 export function Send() {
   const { t } = useI18n();
-  const [inputText, setInputText] = useState('');
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [encryptEnabled, setEncryptEnabled] = useState(false);
-  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const inputData = stringToBytes(inputText);
+  const inputData = stringToBytes(inputText.value);
   const inputBytes = inputData.length;
   const sizeCheck = inputBytes > 0 ? checkPayloadSize(inputData) : null;
   const estimate = inputBytes > 0 ? estimateEncode(inputBytes, inputData) : null;
 
-  const canEncode = inputText.length > 0 && (sizeCheck?.valid ?? true) && (!encryptEnabled || password.length > 0);
+  const canEncode = inputText.value.length > 0 && (sizeCheck?.valid ?? true) && (!encryptEnabled.value || password.value.length > 0);
   // Show QR for small payloads - when encrypted, only show after encoding (with ciphertext)
-  const showInputQR = inputBytes > 0 && inputBytes <= LIMITS.QR_MAX_BYTES && !encryptEnabled && sendState.value === 'idle';
-  const passwordStrength = encryptEnabled && password.length > 0 ? calculatePasswordStrength(password) : 0;
+  const showInputQR = inputBytes > 0 && inputBytes <= LIMITS.QR_MAX_BYTES && !encryptEnabled.value && sendState.value === 'idle';
+  const passwordStrength = encryptEnabled.value && password.value.length > 0 ? calculatePasswordStrength(password.value) : 0;
   const strengthLabel = getPasswordStrengthLabel(passwordStrength);
 
   const handleFileSelect = useCallback((content: string, name: string) => {
-    setInputText(content);
-    setFileName(name);
+    inputText.value = content;
+    fileName.value = name;
     // Mark result as stale when file is loaded
     if (encodeResult.value) {
       isResultStale.value = true;
@@ -59,8 +62,8 @@ export function Send() {
     errorMessage.value = null;
 
     try {
-      const result = await encodeString(inputText, {
-        password: encryptEnabled ? password : undefined,
+      const result = await encodeString(inputText.value, {
+        password: encryptEnabled.value ? password.value : undefined,
       });
       encodeResult.value = result;
       isResultStale.value = false;
@@ -69,7 +72,7 @@ export function Send() {
       errorMessage.value = err instanceof Error ? err.message : 'Encoding failed';
       sendState.value = 'idle';
     }
-  }, [inputText, canEncode, encryptEnabled, password]);
+  }, [canEncode]);
 
   const handlePlay = useCallback(async () => {
     if (!encodeResult.value) return;
@@ -103,19 +106,19 @@ export function Send() {
   const handleDownload = useCallback(() => {
     if (!encodeResult.value) return;
 
-    const filename = fileName
-      ? fileName.replace(/\.[^.]+$/, '') + '.wav'
+    const filename = fileName.value
+      ? fileName.value.replace(/\.[^.]+$/, '') + '.wav'
       : 'nedagram.wav';
 
     downloadWAV(encodeResult.value.audio, encodeResult.value.sampleRate, filename);
-  }, [fileName]);
+  }, []);
 
   const handleClear = useCallback(() => {
     stopAudio();
-    setInputText('');
-    setFileName(null);
-    setEncryptEnabled(false);
-    setPassword('');
+    inputText.value = '';
+    fileName.value = null;
+    encryptEnabled.value = false;
+    password.value = '';
     setShowPassword(false);
     sendState.value = 'idle';
     encodeResult.value = null;
@@ -124,9 +127,9 @@ export function Send() {
   }, []);
 
   const handleEncryptToggle = useCallback((enabled: boolean) => {
-    setEncryptEnabled(enabled);
+    encryptEnabled.value = enabled;
     if (!enabled) {
-      setPassword('');
+      password.value = '';
     }
     // Mark result as stale when encryption toggle changes
     if (encodeResult.value) {
@@ -135,7 +138,7 @@ export function Send() {
   }, []);
 
   const handlePasswordChange = useCallback((newPassword: string) => {
-    setPassword(newPassword);
+    password.value = newPassword;
     // Mark result as stale when password changes
     if (encodeResult.value) {
       isResultStale.value = true;
@@ -143,7 +146,7 @@ export function Send() {
   }, []);
 
   const handleTextChange = useCallback((newText: string) => {
-    setInputText(newText);
+    inputText.value = newText;
     // Mark result as stale when text changes
     if (encodeResult.value) {
       isResultStale.value = true;
@@ -192,7 +195,7 @@ export function Send() {
 
       <div class="input-section">
         <TextInput
-          value={inputText}
+          value={inputText.value}
           onChange={handleTextChange}
           label={t.send.inputLabel}
           placeholder={t.send.inputPlaceholder}
@@ -207,25 +210,25 @@ export function Send() {
             label={t.send.uploadButton}
             disabled={sendState.value === 'encoding'}
           />
-          {fileName && <span class="file-name">{fileName}</span>}
+          {fileName.value && <span class="file-name">{fileName.value}</span>}
 
           <div class="encrypt-inline">
             <label class="encrypt-toggle">
               <input
                 type="checkbox"
-                checked={encryptEnabled}
+                checked={encryptEnabled.value}
                 onChange={(e) => handleEncryptToggle((e.target as HTMLInputElement).checked)}
               />
               <span class="encrypt-label">{t.send.encrypt}</span>
             </label>
 
-            {encryptEnabled && (
+            {encryptEnabled.value && (
               <div class="password-wrapper">
                 <div class="password-input-container">
                   <input
                     type={showPassword ? 'text' : 'password'}
                     class="password-input"
-                    value={password}
+                    value={password.value}
                     onInput={(e) => handlePasswordChange((e.target as HTMLInputElement).value)}
                     placeholder={t.send.passwordPlaceholder}
                     autocapitalize="off"
@@ -252,7 +255,7 @@ export function Send() {
                     )}
                   </button>
                 </div>
-                {password.length > 0 && (
+                {password.value.length > 0 && (
                   <div class={`password-strength-bar strength-${strengthLabel}`} />
                 )}
               </div>
@@ -340,9 +343,9 @@ export function Send() {
         </div>
       )}
 
-      {showInputQR && inputText && (
+      {showInputQR && inputText.value && (
         <div class="qr-section">
-          <QRDisplay data={inputText} title={t.send.qrTitle} />
+          <QRDisplay data={inputText.value} title={t.send.qrTitle} />
         </div>
       )}
     </div>

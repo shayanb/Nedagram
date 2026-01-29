@@ -123,7 +123,7 @@ export function Help() {
           <p class="commands-title">CLI Usage (from extracted folder)</p>
           <CommandBlock label="Encode" command='node cli/index.cjs encode "Hello World" -o message.wav' />
           <CommandBlock label="Decode" command="node cli/index.cjs decode message.wav" />
-          <CommandBlock label="Install from npm" command='npm install -g nedagram' />
+          <CommandBlock label="or Install from npm" command='npm install -g nedagram' />
         </div>
 
         <p class="mode-note">
@@ -165,126 +165,140 @@ export function Help() {
       <section class="help-section specs">
         <h3>{t.help.technicalSpecs}</h3>
 
-        <h4>Phone Mode (Optimized for GSM/Phone Calls)</h4>
-        <dl class="spec-list">
-          <dt>Modulation</dt>
-          <dd>4-MFSK (2 bits per symbol)</dd>
+        <div class="spec-card">
+          <h4>Phone Mode (Optimized for GSM/Phone Calls)</h4>
+          <dl class="spec-list">
+            <dt>Modulation</dt>
+            <dd>4-MFSK (2 bits per symbol)</dd>
 
-          <dt>Tone Frequencies</dt>
-          <dd>800, 1300, 1800, 2300 Hz</dd>
+            <dt>Tone Frequencies</dt>
+            <dd>800, 1300, 1800, 2300 Hz</dd>
 
-          <dt>Tone Spacing</dt>
-          <dd>500 Hz (wide for codec tolerance)</dd>
+            <dt>Tone Spacing</dt>
+            <dd>500 Hz (wide for codec tolerance)</dd>
 
-          <dt>Symbol Duration</dt>
-          <dd>50ms + 12ms guard</dd>
+            <dt>Symbol Duration</dt>
+            <dd>50ms + 12ms guard</dd>
 
-          <dt>Effective Bitrate</dt>
-          <dd>~20-25 bps</dd>
+            <dt>Effective Bitrate</dt>
+            <dd>~20-25 bps</dd>
 
-          <dt>Burst Protection</dt>
-          <dd>Block interleaving enabled</dd>
-        </dl>
+            <dt>Burst Protection</dt>
+            <dd>Block interleaving enabled</dd>
+          </dl>
+        </div>
 
-        <h4>Wideband Mode (HD Voice / Direct)</h4>
-        <dl class="spec-list">
-          <dt>Modulation</dt>
-          <dd>16-MFSK (4 bits per symbol)</dd>
+        <div class="spec-card">
+          <h4>Wideband Mode (HD Voice / Direct)</h4>
+          <dl class="spec-list">
+            <dt>Modulation</dt>
+            <dd>16-MFSK (4 bits per symbol)</dd>
 
-          <dt>Frequency Range</dt>
-          <dd>1800 - 5700 Hz</dd>
+            <dt>Frequency Range</dt>
+            <dd>1800 - 5700 Hz</dd>
 
-          <dt>Symbol Duration</dt>
-          <dd>40ms + 5ms guard</dd>
+            <dt>Symbol Duration</dt>
+            <dd>40ms + 5ms guard</dd>
 
-          <dt>Effective Bitrate</dt>
-          <dd>~50-60 bps</dd>
-        </dl>
+            <dt>Effective Bitrate</dt>
+            <dd>~50-60 bps</dd>
+          </dl>
+        </div>
 
-        <h4>Error Correction (Concatenated FEC)</h4>
-        <p class="mode-note">Same scheme used by NASA's Voyager spacecraft for deep space communication.</p>
-        <dl class="spec-list">
-          <dt>Outer Code</dt>
-          <dd>Reed-Solomon with 16 parity bytes</dd>
+        <div class="spec-card">
+          <h4>Error Correction (Concatenated FEC)</h4>
+          <p class="mode-note">Same scheme used by NASA's Voyager spacecraft for deep space communication.</p>
+          <dl class="spec-list">
+            <dt>Outer Code</dt>
+            <dd>Reed-Solomon with 16 parity bytes</dd>
 
-          <dt>Inner Code</dt>
-          <dd>Convolutional (k=7, rate 2/3 punctured)</dd>
+            <dt>Inner Code</dt>
+            <dd>Convolutional (k=7, rate 2/3 punctured)</dd>
 
-          <dt>Decoding</dt>
-          <dd>Soft-decision Viterbi with 35-symbol traceback</dd>
+            <dt>Decoding</dt>
+            <dd>Soft-decision Viterbi with 35-symbol traceback</dd>
 
-          <dt>Scrambling</dt>
-          <dd>LFSR (x^15 + x^14 + 1) for bit distribution</dd>
+            <dt>Scrambling</dt>
+            <dd>LFSR (x^15 + x^14 + 1) for bit distribution</dd>
 
-          <dt>Error Correction</dt>
-          <dd>~8 byte errors + additional bit errors per frame</dd>
-        </dl>
+            <dt>Error Correction</dt>
+            <dd>~8 byte errors + additional bit errors per frame</dd>
+          </dl>
+        </div>
 
-        <h4>Synchronization (Phone Mode)</h4>
-        <dl class="spec-list">
-          <dt>Warmup Tone</dt>
-          <dd>200ms steady tone for audio path wake-up</dd>
+        <div class="spec-card">
+          <h4>Synchronization (Phone Mode)</h4>
+          <dl class="spec-list">
+            <dt>Warmup Tone</dt>
+            <dd>200ms steady tone for audio path wake-up</dd>
 
-          <dt>Chirp Sweep</dt>
-          <dd>800ms up-down frequency sweep (600-2600 Hz)</dd>
+            <dt>Chirp Sweep</dt>
+            <dd>800ms up-down frequency sweep (600-2600 Hz)</dd>
 
-          <dt>Detection Method</dt>
-          <dd>Matched filter cross-correlation (robust to noise)</dd>
+            <dt>Detection Method</dt>
+            <dd>Matched filter cross-correlation (robust to noise)</dd>
 
-          <dt>Calibration</dt>
-          <dd>4 tones repeated 2x for level calibration</dd>
+            <dt>Calibration</dt>
+            <dd>4 tones repeated 2x for level calibration</dd>
 
-          <dt>Sync Pattern</dt>
-          <dd>8-symbol alternating pattern</dd>
-        </dl>
+            <dt>Sync Pattern</dt>
+            <dd>8-symbol alternating pattern</dd>
+          </dl>
+        </div>
 
-        <h4>Synchronization (Wideband Mode)</h4>
-        <dl class="spec-list">
-          <dt>Warmup Tone</dt>
-          <dd>400ms steady tone for AGC settling</dd>
+        <div class="spec-card">
+          <h4>Synchronization (Wideband Mode)</h4>
+          <dl class="spec-list">
+            <dt>Warmup Tone</dt>
+            <dd>400ms steady tone for AGC settling</dd>
 
-          <dt>Chirp Sweep</dt>
-          <dd>1200ms up-down frequency sweep (1000-4000 Hz)</dd>
+            <dt>Chirp Sweep</dt>
+            <dd>1200ms up-down frequency sweep (1000-4000 Hz)</dd>
 
-          <dt>Detection Method</dt>
-          <dd>Matched filter cross-correlation (robust to noise)</dd>
+            <dt>Detection Method</dt>
+            <dd>Matched filter cross-correlation (robust to noise)</dd>
 
-          <dt>Calibration</dt>
-          <dd>4 tones repeated 3x for level calibration</dd>
+            <dt>Calibration</dt>
+            <dd>4 tones repeated 3x for level calibration</dd>
 
-          <dt>Sync Pattern</dt>
-          <dd>8-symbol alternating pattern</dd>
-        </dl>
+            <dt>Sync Pattern</dt>
+            <dd>8-symbol alternating pattern</dd>
+          </dl>
+        </div>
 
-        <h4>Encryption (Optional)</h4>
-        <dl class="spec-list">
-          <dt>Cipher</dt>
-          <dd>ChaCha20-Poly1305 (AEAD)</dd>
+        <div class="spec-card">
+          <h4>Encryption (Optional)</h4>
+          <dl class="spec-list">
+            <dt>Cipher</dt>
+            <dd>ChaCha20-Poly1305 (AEAD)</dd>
 
-          <dt>Key Derivation</dt>
-          <dd>PBKDF2-SHA256 (100,000 iterations)</dd>
+            <dt>Key Derivation</dt>
+            <dd>PBKDF2-SHA256 (100,000 iterations)</dd>
 
-          <dt>Overhead</dt>
-          <dd>44 bytes (16 salt + 12 nonce + 16 auth tag)</dd>
-        </dl>
+            <dt>Overhead</dt>
+            <dd>44 bytes (16 salt + 12 nonce + 16 auth tag)</dd>
+          </dl>
+        </div>
 
-        <h4>Common Settings</h4>
-        <dl class="spec-list">
-          <dt>Header Format</dt>
-          <dd>12 bytes compact (N3 magic, CRC16)</dd>
+        <div class="spec-card">
+          <h4>Common Settings</h4>
+          <dl class="spec-list">
+            <dt>Header Format</dt>
+            <dd>12 bytes compact (N3 magic, CRC16)</dd>
 
-          <dt>Compression</dt>
-          <dd>DEFLATE (automatic)</dd>
+            <dt>Compression</dt>
+            <dd>DEFLATE (automatic)</dd>
 
-          <dt>Checksum</dt>
-          <dd>SHA-256 (of original plaintext)</dd>
+            <dt>Checksum</dt>
+            <dd>SHA-256 (of original plaintext)</dd>
 
-          <dt>Maximum Payload</dt>
-          <dd>100 KB</dd>
+            <dt>Maximum Payload</dt>
+            <dd>100 KB</dd>
 
-          <dt>Protocol Version</dt>
-          <dd>3.0 (Concatenated FEC)</dd>
-        </dl>
+            <dt>Protocol Version</dt>
+            <dd>3.0 (Concatenated FEC)</dd>
+          </dl>
+        </div>
       </section>
 
       <section class="help-section version">
