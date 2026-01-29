@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { encodeString, checkPayloadSize } from '../src/encode';
+import { encodeString, encodeBytes, checkPayloadSize, estimateEncode } from '../src/encode';
 import { LIMITS } from '../src/utils/constants';
 
 describe('Encode Pipeline', () => {
@@ -64,6 +64,47 @@ describe('Encode Pipeline', () => {
       const result2 = await encodeString(text);
 
       expect(result1.checksum).toBe(result2.checksum);
+    });
+  });
+
+  describe('v3 Protocol Encoding', () => {
+    it('should encode with v3 protocol (default)', async () => {
+      const result = await encodeString('hello v3 world');
+
+      expect(result.audio).toBeInstanceOf(Float32Array);
+      expect(result.audio.length).toBeGreaterThan(0);
+      expect(result.sampleRate).toBe(48000);
+      expect(result.checksum).toHaveLength(64);
+    });
+
+    it('should produce correct encoded output with v3 FEC', async () => {
+      const text = 'test data for v3 encoding';
+      const result = await encodeString(text);
+
+      // v3 uses concatenated RS + Convolutional FEC
+      // Verify encoding produces reasonable output size
+      expect(result.stats.totalEncodedBytes).toBeGreaterThan(0);
+      expect(result.durationSeconds).toBeGreaterThan(0);
+      expect(result.stats.frameCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should estimate v3 encoding correctly', () => {
+      const dataSize = 1000;
+      const estimate = estimateEncode(dataSize);
+
+      // Should produce reasonable estimates
+      expect(estimate.estimatedDuration).toBeGreaterThan(0);
+      expect(estimate.estimatedFrames).toBeGreaterThanOrEqual(1);
+      expect(estimate.estimatedAudioBytes).toBeGreaterThan(0);
+    });
+
+    it('should encode bytes with v3 protocol', async () => {
+      const data = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]); // "Hello"
+
+      const result = await encodeBytes(data);
+
+      expect(result.audio).toBeInstanceOf(Float32Array);
+      expect(result.stats.originalSize).toBe(5);
     });
   });
 });

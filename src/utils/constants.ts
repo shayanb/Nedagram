@@ -111,6 +111,29 @@ export const FRAME = {
   COMPRESSION_DEFLATE: 1,
 };
 
+/**
+ * v3 Frame structure - adds convolutional FEC
+ *
+ * Changes from v2:
+ * - Magic 'N3' indicates v3 protocol
+ * - Version 0x03
+ * - Convolutional + RS concatenated coding
+ * - Same header structure, but encoded with v3 FEC
+ */
+export const FRAME_V3 = {
+  ...FRAME,
+
+  // v3-specific overrides
+  HEADER_MAGIC: 'N3',       // v3 magic
+  DATA_MAGIC: 'D',          // Same data magic
+
+  // Version
+  CURRENT_VERSION: 0x03,    // v3 protocol
+
+  // FEC mode indicator
+  FEC_MODE: 'concatenated', // RS + Convolutional
+} as const;
+
 
 // Limits
 export const LIMITS = {

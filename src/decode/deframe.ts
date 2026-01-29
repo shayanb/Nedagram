@@ -16,7 +16,8 @@
  *   [2]    Payload length (1 byte, actual data in this frame)
  *   [3..n] Payload (variable, no padding)
  */
-import { FRAME } from '../utils/constants';
+import { FRAME_V3 } from '../utils/constants';
+import { ProtocolVersion } from '../encode/frame';
 import { readUint16LE, bytesToString } from '../utils/helpers';
 
 // Flag bits (must match encode/frame.ts)
@@ -35,6 +36,8 @@ export interface HeaderInfo {
   compressed: boolean;
   encrypted: boolean;
   crcValid: boolean;
+  /** Protocol version detected from magic bytes */
+  protocolVersion: ProtocolVersion;
 }
 
 export interface DataFrameInfo {
@@ -62,19 +65,27 @@ function crc16(data: Uint8Array): number {
 }
 
 /**
- * Parse compact header frame (after RS decoding)
+ * Parse compact header frame (after RS/Viterbi decoding)
  * Input: 12-byte header
+ *
+ * Currently supports v3 protocol (magic "N3")
+ * Protocol version detection is preserved for future extensibility
  */
 export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
-  if (frame.length < FRAME.HEADER_SIZE) {
-    console.log('[Deframe] Header too short:', frame.length, 'expected', FRAME.HEADER_SIZE);
+  if (frame.length < FRAME_V3.HEADER_SIZE) {
+    console.log('[Deframe] Header too short:', frame.length, 'expected', FRAME_V3.HEADER_SIZE);
     return null;
   }
 
-  // Check magic "N1"
+  // Check magic - currently only v3 (magic "N3") is supported
+  // Version detection is preserved for future protocol versions
   const magic = bytesToString(frame.subarray(0, 2));
-  if (magic !== FRAME.HEADER_MAGIC) {
-    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME.HEADER_MAGIC);
+  let protocolVersion: ProtocolVersion;
+
+  if (magic === FRAME_V3.HEADER_MAGIC) {
+    protocolVersion = 'v3';
+  } else {
+    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME_V3.HEADER_MAGIC);
     return null;
   }
 
@@ -104,6 +115,7 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
     compressed: (flags & FLAG_COMPRESSED) !== 0,
     encrypted: (flags & FLAG_ENCRYPTED) !== 0,
     crcValid,
+    protocolVersion,
   };
 }
 
@@ -125,8 +137,8 @@ export function parseDataFrame(frame: Uint8Array): DataFrameInfo | null {
 
   // Check magic "D"
   const magic = String.fromCharCode(frame[0]);
-  if (magic !== FRAME.DATA_MAGIC) {
-    console.log('[Deframe] Invalid data magic:', frame[0], 'expected', FRAME.DATA_MAGIC.charCodeAt(0));
+  if (magic !== FRAME_V3.DATA_MAGIC) {
+    console.log('[Deframe] Invalid data magic:', frame[0], 'expected', FRAME_V3.DATA_MAGIC.charCodeAt(0));
     return null;
   }
 
