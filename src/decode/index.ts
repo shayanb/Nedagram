@@ -984,7 +984,10 @@ export class Decoder {
             console.log(`[Decoder] Header recovered with phase=${phase}, offset=${offset}`);
           }
           this.headerInfo = result.header;
-          this.headerRepeated = result.redundant || result.header.totalFrames > 1;
+          // headerRepeated should match encoder logic: only repeat for multi-frame messages
+          // Do NOT use result.redundant - it reflects decoder recovery, not encoder behavior
+          // For 1-frame messages, encoder sends only 1 header copy (see modulate.ts)
+          this.headerRepeated = result.header.totalFrames > 1;
           this.frameCollector.setHeader(result.header);
           this.totalErrorsFixed += Math.max(0, result.correctedErrors);
           this.consecutiveHeaderFailures = 0;
@@ -995,6 +998,9 @@ export class Decoder {
           if (offset !== 0) {
             this.syncFoundAt += offset;
           }
+          // Set expected duration timeout
+          this.headerDecodedTime = Date.now();
+          this.expectedEndTime = this.calculateExpectedEndTime(result.header.totalFrames);
           this.state = 'receiving_data';
           this.lastDebugInfo = `Header OK${result.redundant ? ' (redundant)' : ''}! Frames: ${result.header.totalFrames}, Size: ${result.header.originalLength}`;
           console.log('[Decoder] Header valid! Expecting', result.header.totalFrames, 'frames');
@@ -1087,7 +1093,9 @@ export class Decoder {
           const header = parseHeaderFrame(decodeResult2.data);
           if (header && header.crcValid) {
             this.headerInfo = header;
-            this.headerRepeated = true;
+            // headerRepeated should match encoder logic, not decoder recovery method
+            // Encoder only sends 2 copies for multi-frame messages (totalFrames > 1)
+            this.headerRepeated = header.totalFrames > 1;
             this.frameCollector.setHeader(header);
             this.totalErrorsFixed += Math.max(0, decodeResult2.correctedErrors);
 
