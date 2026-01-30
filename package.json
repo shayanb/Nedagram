@@ -1,6 +1,6 @@
 {
   "name": "nedagram",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "description": "Encode and decode text as audio signals - CLI tool for transmitting data over phone calls and audio channels",
   "type": "module",
   "bin": {

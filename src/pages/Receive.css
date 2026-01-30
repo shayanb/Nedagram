@@ -218,6 +218,56 @@
   margin: 0;
 }
 
+.debug-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.debug-hint a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.debug-hint a:hover {
+  text-decoration: underline;
+}
+
+/* Listening controls with copy debug button */
+.listening-controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: stretch;
+}
+
+.listening-controls .button {
+  flex: 1;
+}
+
+.copy-debug-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.copy-debug-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(157, 126, 138, 0.05);
+}
+
+.copy-debug-btn svg {
+  flex-shrink: 0;
+}
+
 .result-section {
   display: flex;
   flex-direction: column;

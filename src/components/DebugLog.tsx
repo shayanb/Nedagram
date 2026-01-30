@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+import { useEffect, useRef, useCallback } from 'preact/hooks';
 import { signal } from '@preact/signals';
+import { BUILD_VERSION, BUILD_TIME } from '../utils/version';
+import { getAudioMode } from '../utils/constants';
 import './DebugLog.css';
 
 // Log entry type
@@ -113,6 +115,87 @@ export function clearDebugLogs() {
   logs.value = [];
 }
 
+// Get environment info for debug report
+function getEnvironmentInfo(): Record<string, string> {
+  const ua = navigator.userAgent;
+
+  // Detect browser
+  let browser = 'Unknown';
+  if (ua.includes('Firefox/')) {
+    browser = 'Firefox ' + (ua.match(/Firefox\/(\d+)/)?.[1] || '');
+  } else if (ua.includes('Edg/')) {
+    browser = 'Edge ' + (ua.match(/Edg\/(\d+)/)?.[1] || '');
+  } else if (ua.includes('Chrome/')) {
+    browser = 'Chrome ' + (ua.match(/Chrome\/(\d+)/)?.[1] || '');
+  } else if (ua.includes('Safari/') && !ua.includes('Chrome')) {
+    browser = 'Safari ' + (ua.match(/Version\/(\d+)/)?.[1] || '');
+  }
+
+  // Detect OS
+  let os = 'Unknown';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X')) os = 'macOS';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('Linux')) os = 'Linux';
+
+  // Detect device type
+  let device = 'Desktop';
+  if (/iPhone|iPad|iPod|Android/i.test(ua)) {
+    device = /iPad/i.test(ua) ? 'Tablet' : 'Mobile';
+  }
+
+  return { browser, os, device };
+}
+
+// Generate debug report for copying
+export function generateDebugReport(): string {
+  const env = getEnvironmentInfo();
+  const mode = getAudioMode();
+
+  const lines: string[] = [
+    '## Nedagram Debug Report',
+    '',
+    '### Build Info',
+    '```',
+    `Version: ${BUILD_VERSION}`,
+    `Build Time: ${BUILD_TIME}`,
+    `Audio Mode: ${mode}`,
+    '```',
+    '',
+    '### Environment',
+    '```',
+    `Browser: ${env.browser}`,
+    `OS: ${env.os}`,
+    `Device: ${env.device}`,
+    `Screen: ${window.screen.width}x${window.screen.height}`,
+    `Viewport: ${window.innerWidth}x${window.innerHeight}`,
+    '```',
+  ];
+
+  if (logs.value.length > 0) {
+    lines.push('', '### Session Log', '```');
+    logs.value.forEach(log => {
+      const time = new Date(log.timestamp).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      const prefix = log.level === 'error' ? '[ERROR] ' : log.level === 'warn' ? '[WARN] ' : '';
+      lines.push(`${time} ${prefix}${log.message}`);
+    });
+    lines.push('```');
+  }
+
+  lines.push('', `Generated: ${new Date().toISOString()}`);
+
+  return lines.join('\n');
+}
+
+// Copy state
+const copyState = signal<'idle' | 'copied'>('idle');
+
 // Component
 export function DebugLog() {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -141,6 +224,19 @@ export function DebugLog() {
 
   const handleClear = useCallback(() => {
     clearDebugLogs();
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    const report = generateDebugReport();
+    try {
+      await navigator.clipboard.writeText(report);
+      copyState.value = 'copied';
+      setTimeout(() => {
+        copyState.value = 'idle';
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy debug report:', err);
+    }
   }, []);
 
   const handleStop = useCallback(() => {
@@ -208,12 +304,13 @@ export function DebugLog() {
       {/* Action buttons (only when expanded) */}
       {isEnabled.value && isExpanded.value && (
         <div class="debug-actions">
-          {logs.value.length > 0 && (
-            <button class="debug-clear" onClick={handleClear}>
-              Clear
-            </button>
-          )}
-          <button class="debug-stop" onClick={handleStop}>
+          <button class="debug-btn" onClick={handleClear}>
+            Clear
+          </button>
+          <button class="debug-btn debug-copy" onClick={handleCopy}>
+            {copyState.value === 'copied' ? 'Copied!' : 'Copy'}
+          </button>
+          <button class="debug-btn debug-stop" onClick={handleStop}>
             Stop
           </button>
         </div>

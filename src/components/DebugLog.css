@@ -127,8 +127,7 @@
   margin-top: var(--space-xs);
 }
 
-.debug-clear,
-.debug-stop {
+.debug-btn {
   flex: 1;
   padding: 4px;
   background: transparent;
@@ -140,9 +139,14 @@
   transition: all 0.15s ease;
 }
 
-.debug-clear:hover {
-  border-color: var(--color-error);
-  color: var(--color-error);
+.debug-btn:hover {
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
+}
+
+.debug-copy:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .debug-stop:hover {

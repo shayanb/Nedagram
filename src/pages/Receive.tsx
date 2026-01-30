@@ -508,6 +508,9 @@ export function Receive() {
             )}
           </div>
           <p class="error-hint">{t.receive.errorHint}</p>
+          <p class="debug-hint">
+            Having issues? Use the debug log panel to copy info, then <a href="https://github.com/shayanb/nedagram/issues/new?template=bug_report.md" target="_blank" rel="noopener noreferrer">report a bug</a>.
+          </p>
         </div>
       )}
 
