@@ -12,7 +12,7 @@ export const en = {
   },
   send: {
     title: 'Send',
-    description: 'Type or paste text, then generate audio to transmit.',
+    description: 'Type or paste text, then generate audio to transmit over sound.',
     inputLabel: 'Enter text or upload a file',
     inputPlaceholder: 'Paste your config file, password, URL, or any text here...',
     uploadButton: 'Upload File',
@@ -101,13 +101,21 @@ export const en = {
   help: {
     title: 'Help',
     gettingStarted: 'Getting Started',
-    gettingStartedText: 'Nedagram encodes text into audio signals that can be transmitted between devices using speakers and microphones (e.g over a phone call). This works completely offline after the first visit.',
+    gettingStartedText: 'Nedagram encodes text into audio signals ("Neda") that can be transmitted between devices over a phone call or through speakers to microphones (e.g over a phone call). This works completely without internet after the first visit.',
+    useCasesTitle: 'Use Cases',
+    useCases: [
+      'Share config files, complex passwords, or long URLs over phone calls when internet is unavailable',
+      'Transfer data between air-gapped devices (private keys, signatures)',
+      'Off-grid communication - works anywhere with no network required',
+      'Fully offline after first load',
+      'No server, No tracking, No data leaves your device.',
+    ],
     sending: 'Sending Data',
     sendingSteps: [
       'Enter your text or upload a file',
       'Click "Generate Audio" to create the transmission',
       'Play the audio near the receiving device',
-      'For best results, keep devices 0.5-1 meter apart',
+      'For best results, keep devices 30cm to 1 meter apart',
     ],
     receiving: 'Receiving Data',
     receivingSteps: [

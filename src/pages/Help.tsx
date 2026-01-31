@@ -55,6 +55,12 @@ export function Help() {
       <section class="help-section">
         <h3>{t.help.gettingStarted}</h3>
         <p>{t.help.gettingStartedText}</p>
+        <h4>{t.help.useCasesTitle}</h4>
+        <ul class="help-list tips">
+          {t.help.useCases.map((useCase, i) => (
+            <li key={i}>{useCase}</li>
+          ))}
+        </ul>
       </section>
 
       <section class="help-section">

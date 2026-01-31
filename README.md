@@ -6,7 +6,7 @@
 
 [فارسی](README-fa.md) | English
 
-**Transfer text over sound** - A Progressive Web App that encodes text into audio signals for transmission between devices using speakers and microphones (e.g. over a phone call).
+**Transfer text over sound** - A Progressive Web App that encodes text into audio signals ("Neda") that can be transmitted between devices over a phone call or through speakers to microphones. Works completely without internet after the first visit.
 
 ## Why Nedagram?
 
@@ -14,10 +14,10 @@
 
 Nedagram was built to help share text data when sending files isn't possible. By converting text to audio, you can:
 
-- Share data (config files, long urls, ...) over **phone calls** (cellular, landline, or VoIP)
-- Transfer between devices **without any internet connection**
-- Work **completely offline** after the first visit
-- **Encrypt your data** with password protection
+- Share config files, complex passwords, or long URLs over **phone calls** when internet is unavailable
+- Transfer data between **air-gapped devices** (private keys, signatures)
+- **Off-grid communication** - works anywhere with no network required
+- **Fully offline** after first load - no server, no tracking, no data leaves your device
 
 ## How It Works
 
@@ -63,17 +63,11 @@ Nedagram was built to help share text data when sending files isn't possible. By
 
 ## Use Cases
 
-### Primary: Sharing Config Files & Credentials
-Share configuration files, complex passwords, or long URLs via:
-- Regular phone call
-- Voice message apps
-- Direct speaker-to-microphone
-
-### Other Uses
-- Air-gapped computer data transfer
-- Backup codes and credentials
-- Text messages in radio communications
-- Any scenario where network transfer isn't available
+- Share config files, complex passwords, or long URLs over phone calls when internet is unavailable
+- Transfer data between air-gapped devices (private keys, signatures)
+- Off-grid communication - works anywhere with no network required
+- Fully offline after first load
+- No server, no tracking, no data leaves your device
 
 ## Quick Start
 

@@ -25,6 +25,13 @@
   margin-bottom: var(--space-sm);
 }
 
+.help-section h4 {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: var(--space-md) 0 var(--space-sm) 0;
+}
+
 .help-section p {
   color: var(--color-text-muted);
   line-height: 1.6;
