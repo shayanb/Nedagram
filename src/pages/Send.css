@@ -341,6 +341,7 @@
   .option-group {
     width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .segmented-toggle {
@@ -351,6 +352,12 @@
   .toggle-btn {
     flex: 1;
     min-width: unset;
+  }
+
+  .mode-hint {
+    width: 100%;
+    white-space: normal;
+    margin-top: var(--space-xs);
   }
 
   .password-row {

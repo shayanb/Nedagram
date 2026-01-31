@@ -63,5 +63,6 @@
     right: var(--space-sm);
     transform: none;
     bottom: 90px;
+    justify-content: space-between;
   }
 }
