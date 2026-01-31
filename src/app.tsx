@@ -34,9 +34,6 @@ export function App() {
     }
   };
 
-  // Only show debug log on send and receive pages
-  const showDebugLog = currentPage.value === 'send' || currentPage.value === 'receive';
-
   return (
     <Layout
       currentPage={currentPage.value}
@@ -45,8 +42,8 @@ export function App() {
     >
       {renderPage()}
 
-      {/* Debug log panel - persistent across send/receive pages */}
-      {showDebugLog && <DebugLog />}
+      {/* Debug log panel - always visible for bug reporting */}
+      <DebugLog />
 
       {/* Update notification toast */}
       <UpdateToast />

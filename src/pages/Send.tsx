@@ -213,21 +213,21 @@ export function Send() {
 
         <div class="options-row">
           <div class="option-group">
-            <span class="option-label">Mode</span>
+            <span class="option-label">{t.send.mode}</span>
             <div class="segmented-toggle">
               <button
                 class={`toggle-btn ${audioMode.value === 'phone' ? 'active' : ''}`}
                 onClick={() => handleModeChange('phone')}
                 title="Standard phone calls (300-3400 Hz)"
               >
-                Phone
+                {t.send.modePhone}
               </button>
               <button
                 class={`toggle-btn ${audioMode.value === 'wideband' ? 'active' : ''}`}
                 onClick={() => handleModeChange('wideband')}
                 title="HD Voice or direct (faster)"
               >
-                Wideband
+                {t.send.modeWideband}
               </button>
             </div>
             {audioMode.value === 'wideband' && (
@@ -236,19 +236,19 @@ export function Send() {
           </div>
 
           <div class="option-group">
-            <span class="option-label">Encrypt</span>
+            <span class="option-label">{t.send.encrypt}</span>
             <div class="segmented-toggle">
               <button
                 class={`toggle-btn ${!encryptEnabled.value ? 'active' : ''}`}
                 onClick={() => handleEncryptToggle(false)}
               >
-                Off
+                {t.send.encryptOff}
               </button>
               <button
                 class={`toggle-btn ${encryptEnabled.value ? 'active' : ''}`}
                 onClick={() => handleEncryptToggle(true)}
               >
-                On
+                {t.send.encryptOn}
               </button>
             </div>
           </div>

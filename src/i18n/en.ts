@@ -28,6 +28,12 @@ export const en = {
     tooLarge: 'Payload exceeds maximum size (100KB)',
     largeWarning: 'Large payload - transmission may take several minutes',
     widebandHint: 'For HD Voice calls or direct speaker-to-mic',
+    // Mode & Encrypt toggles
+    mode: 'Mode',
+    modePhone: 'Phone',
+    modeWideband: 'Wideband',
+    encryptOn: 'On',
+    encryptOff: 'Off',
     // Tips
     tips: {
       phoneMode: 'Phone mode: For standard phone calls. Slower but works through voice codecs.',

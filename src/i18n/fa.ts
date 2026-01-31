@@ -30,6 +30,12 @@ export const fa: Translations = {
     tooLarge: 'حجم داده بیش از حد مجاز است (۱۰۰ کیلوبایت)',
     largeWarning: 'داده حجیم - انتقال ممکن است چند دقیقه طول بکشد',
     widebandHint: 'برای تماس HD Voice یا مستقیم بلندگو به میکروفون',
+    // Mode & Encrypt toggles
+    mode: 'حالت',
+    modePhone: 'Phone',
+    modeWideband: 'Wideband',
+    encryptOn: 'روشن',
+    encryptOff: 'خاموش',
     // Tips
     tips: {
       phoneMode: 'حالت Phone: برای تماس تلفنی معمولی. کندتر ولی با کُدِک صوتی کار می‌کند.',
