@@ -301,6 +301,26 @@ export function Help() {
         </div>
       </section>
 
+      <section class="help-section bug-report">
+        <h3>{t.help.reportBug}</h3>
+        <p>{t.help.reportBugDesc}</p>
+        <ol class="help-list">
+          {t.help.reportBugSteps.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+        <div class="bug-report-actions">
+          <a
+            href="https://github.com/shayanb/nedagram/issues/new?template=bug_report.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="button secondary"
+          >
+            {t.help.createIssue}
+          </a>
+        </div>
+      </section>
+
       <section class="help-section version">
         <h3>{t.help.versionInfo}</h3>
         <dl class="spec-list">

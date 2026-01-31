@@ -342,6 +342,19 @@ npm run test:cli
 
 *Requires microphone permission for receiving.*
 
+## Reporting Bugs
+
+If you encounter issues with decoding or any other problems, please report them on GitHub:
+
+1. Click the **debug log button** (bottom-right corner of the app) to enable logging
+2. Reproduce the issue
+3. Click **"Copy"** in the debug panel to copy the log
+4. If possible, click **"Save Audio"** to save the recorded audio file
+5. [Create a GitHub issue](https://github.com/shayanb/nedagram/issues/new?template=bug_report.md) with:
+   - The debug log
+   - The audio file (if available)
+   - Description of what you were trying to do
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.

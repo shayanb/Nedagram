@@ -157,14 +157,16 @@
   border-color: var(--color-primary-light);
 }
 
-.offline-actions {
+.offline-actions,
+.bug-report-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
   margin-top: var(--space-md);
 }
 
-.offline-actions .button {
+.offline-actions .button,
+.bug-report-actions .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,13 +194,16 @@
   cursor: not-allowed;
 }
 
-.offline-actions .button.secondary {
+.offline-actions .button.secondary,
+.bug-report-actions .button.secondary {
   background: var(--color-surface);
   color: var(--color-text);
   border: 1px solid var(--color-border);
+  text-decoration: none;
 }
 
-.offline-actions .button.secondary:hover {
+.offline-actions .button.secondary:hover,
+.bug-report-actions .button.secondary:hover {
   background: var(--color-bg);
   border-color: var(--color-text-muted);
 }

@@ -11,46 +11,89 @@
   margin-bottom: var(--space-xs);
 }
 
-.settings-row {
-  display: flex;
-  gap: var(--space-lg);
-  flex-wrap: wrap;
-}
-
-.setting-group {
+/* Page description with tip button */
+.page-description {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-.mode-hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  width: 100%;
-  margin-top: calc(-1 * var(--space-xs));
-  padding-inline-start: 45px;
-}
-
-.setting-label {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
-  min-width: 35px;
 }
 
-.mode-toggle {
+.tip-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tip-button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.tips-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.tips-panel ul {
+  margin: 0;
+  padding-left: var(--space-md);
+}
+
+.tips-panel li {
+  margin-bottom: var(--space-xs);
+}
+
+.tips-panel li:last-child {
+  margin-bottom: 0;
+}
+
+.tips-panel strong {
+  color: var(--color-text);
+}
+
+/* Options row - Mode and Encrypt toggles */
+.options-row {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.option-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.option-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  min-width: 50px;
+}
+
+/* Segmented toggle (shared style for Mode and Encrypt) */
+.segmented-toggle {
   display: flex;
   gap: 2px;
   background: var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: 2px;
 }
 
-.mode-toggle.compact {
-  border-radius: var(--radius-sm);
-}
-
-.mode-btn {
+.toggle-btn {
   padding: var(--space-xs) var(--space-sm);
   font-size: var(--font-size-sm);
   font-weight: 500;
@@ -58,18 +101,33 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) - 2px);
   transition: all 0.15s ease;
+  min-width: 60px;
 }
 
-.mode-btn:hover {
+.toggle-btn:hover {
   color: var(--color-text);
 }
 
-.mode-btn.active {
+.toggle-btn.active {
   background: var(--color-surface);
   color: var(--color-primary);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.mode-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* Password row */
+.password-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
 }
 
 .input-section {
@@ -183,47 +241,7 @@
   border-radius: var(--radius-md);
 }
 
-/* Encryption UI - Inline */
-.input-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-}
-
-.encrypt-inline {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin-left: auto;
-}
-
-.encrypt-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.encrypt-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-primary);
-}
-
-.encrypt-label {
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-}
-
-.password-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 200px;
-}
-
+/* Password input */
 .password-input-container {
   display: flex;
   align-items: center;
@@ -315,12 +333,27 @@
 
 /* Responsive adjustments */
 @media (max-width: 480px) {
-  .settings-row {
+  .options-row {
+    flex-direction: column;
     gap: var(--space-md);
   }
 
-  .password-wrapper {
+  .option-group {
     width: 100%;
+    justify-content: space-between;
+  }
+
+  .segmented-toggle {
+    flex: 1;
+    max-width: 200px;
+  }
+
+  .toggle-btn {
+    flex: 1;
     min-width: unset;
+  }
+
+  .password-row {
+    max-width: none;
   }
 }

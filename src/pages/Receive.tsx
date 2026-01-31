@@ -31,6 +31,8 @@ const fileProgress = signal(0);
 const isDragging = signal(false);
 const dragCounter = signal(0); // Track nested drag enter/leave events
 
+const showReceiveTips = signal(false);
+
 export function Receive() {
   const { t } = useI18n();
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
@@ -375,9 +377,32 @@ export function Receive() {
     >
       <h2 class="page-title">{t.receive.title}</h2>
 
-      <p class="auto-detect-hint">
-        {t.receive.autoDetectHint}
-      </p>
+      <div class="page-description">
+        <span>{t.receive.description}</span>
+        <button
+          class="tip-button"
+          onClick={() => { showReceiveTips.value = !showReceiveTips.value; }}
+          title="Show tips"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </button>
+      </div>
+
+      {showReceiveTips.value && (
+        <div class="tips-panel">
+          <ul>
+            <li>{t.receive.tips.overPhone}</li>
+            <li>{t.receive.tips.inPerson}</li>
+            <li>{t.receive.tips.bestResults}</li>
+            <li>{t.receive.tips.troubleshooting}</li>
+          </ul>
+          <p class="tips-note">{t.receive.autoDetectHint}</p>
+        </div>
+      )}
 
       {/* Hidden file input */}
       <input

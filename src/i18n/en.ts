@@ -12,6 +12,7 @@ export const en = {
   },
   send: {
     title: 'Send',
+    description: 'Type or paste text, then generate audio to transmit.',
     inputLabel: 'Enter text or upload a file',
     inputPlaceholder: 'Paste your config file, password, URL, or any text here...',
     uploadButton: 'Upload File',
@@ -26,7 +27,14 @@ export const en = {
     frames: 'Frames',
     tooLarge: 'Payload exceeds maximum size (100KB)',
     largeWarning: 'Large payload - transmission may take several minutes',
-    widebandHint: 'Direct Speaker to Mic or HD Voice calls',
+    widebandHint: 'For HD Voice calls or direct speaker-to-mic',
+    // Tips
+    tips: {
+      phoneMode: 'Phone mode: For standard phone calls. Slower but works through voice codecs.',
+      widebandMode: 'Wideband mode: For HD Voice calls or direct device-to-device. Faster transmission.',
+      encryption: 'Encryption: Protect sensitive data with a password. Share the password separately.',
+      checksum: 'Checksum: Compare checksums on both ends to verify data integrity.',
+    },
     // Encryption
     encrypt: 'Encrypt',
     password: 'Password',
@@ -40,8 +48,16 @@ export const en = {
   },
   receive: {
     title: 'Receive',
-    autoDetectHint: 'Audio mode and error correction are automatically detected',
+    description: 'Listen for audio transmission or upload a recording to decode.',
+    autoDetectHint: 'Audio mode and encryption are automatically detected.',
     listenButton: 'Start Listening',
+    // Tips
+    tips: {
+      overPhone: 'Over phone: Hold speaker near mic, or use speakerphone. Minimize background noise.',
+      inPerson: 'In person: Keep devices 30cm-1m apart. Error rates are higher in noisy environments.',
+      bestResults: 'Best results: Maximum speaker volume, face speakers toward mic, reduce echo.',
+      troubleshooting: 'Troubleshooting: If decoding fails, try recording the audio and uploading instead.',
+    },
     stopButton: 'Stop',
     uploadAudio: 'Upload Audio File',
     uploadHint: 'or drag & drop an audio file',
@@ -126,6 +142,17 @@ export const en = {
     // Technical Specs section
     technicalSpecs: 'Technical Specs',
     versionInfo: 'Version Info',
+    // Bug reporting
+    reportBug: 'Report a Bug',
+    reportBugDesc: 'If you encounter issues with decoding or any other problems, please report them on GitHub.',
+    reportBugSteps: [
+      'Click the debug log button (bottom-right corner) to enable logging',
+      'Reproduce the issue',
+      'Click "Copy" in the debug panel to copy the log',
+      'If possible, save the audio file using "Save Audio" button',
+      'Create a GitHub issue with the debug log and audio file',
+    ],
+    createIssue: 'Create GitHub Issue',
     // Offline Download section
     offlineDownload: 'Offline Local Version',
     offlineDownloadDesc: 'Download Nedagram to use completely offline on your computer, with no internet connection required. Perfect for sharing with others who have limited internet access.',
