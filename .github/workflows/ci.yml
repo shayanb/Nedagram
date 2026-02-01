@@ -25,8 +25,8 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Run tests
-        run: npm run test:run
+      - name: Run tests (excluding CLI)
+        run: npm run test:run -- --exclude 'tests/cli.test.ts'
 
   test-cli:
     runs-on: ubuntu-latest
