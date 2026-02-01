@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build web app (required for CLI assets)
+        run: npm run build:web
+
       - name: Build CLI
         run: npm run build:cli
 
