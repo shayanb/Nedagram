@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { encodeCommand } from './encode.js';
 import { decodeCommand } from './decode.js';
+import { serveCommand } from './serve.js';
 
 // Version injected at build time
 declare const __VERSION__: string;
@@ -23,6 +24,7 @@ Examples:
   $ echo "text" | nedagram encode -o piped.wav
   $ nedagram decode message.wav
   $ nedagram decode encrypted.wav -p secret
+  $ nedagram serve
 
 For more information, visit: https://github.com/AHK-Labs/Nedagram`);
 
@@ -73,5 +75,22 @@ Examples:
   $ nedagram decode encrypted.wav -p "my password"
   $ nedagram decode message.wav -o output.txt`)
   .action(decodeCommand);
+
+// Serve command
+program
+  .command('serve')
+  .description('Start a local web server for the Nedagram web interface')
+  .option('-p, --port <port>', 'Port to listen on (default: 8000)')
+  .option('-q, --quiet', 'Only output the URL')
+  .addHelpText('after', `
+The serve command starts a local HTTP server that hosts the Nedagram web
+interface. This allows you to use the full graphical interface in your
+browser without needing an internet connection.
+
+Examples:
+  $ nedagram serve
+  $ nedagram serve -p 3000
+  $ nedagram serve -q`)
+  .action(serveCommand);
 
 program.parse();

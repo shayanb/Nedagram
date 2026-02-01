@@ -37,3 +37,6 @@ coverage/
 
 # prevent wav files from being tracked
 *.wav
+
+# Build-time generated files
+cli/web-assets.generated.ts

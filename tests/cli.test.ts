@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync, spawnSync } from 'child_process';
+import { execSync, spawnSync, spawn, ChildProcess } from 'child_process';
 import { existsSync, unlinkSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import http from 'http';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -229,6 +230,251 @@ describe('CLI', () => {
       const result = cli(['decode', wavFile, '-q']);
 
       expect(result.stdout.trim()).toBe(message);
+    });
+  });
+
+  describe('Serve Command', () => {
+    it('should show serve help with serve --help', () => {
+      const result = cli(['serve', '--help']);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Start a local web server');
+      expect(result.stdout).toContain('--port');
+      expect(result.stdout).toContain('--quiet');
+    });
+
+    it('should start server and serve index.html', async () => {
+      // Start server in background
+      const serverProcess = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let port = 8000;
+
+      try {
+        // Wait for server to start and get the port
+        const portPromise = new Promise<number>((resolve, reject) => {
+          let output = '';
+          serverProcess.stdout?.on('data', (data) => {
+            output += data.toString();
+            const match = output.match(/http:\/\/localhost:(\d+)/);
+            if (match) {
+              resolve(parseInt(match[1], 10));
+            }
+          });
+          serverProcess.stderr?.on('data', (data) => {
+            output += data.toString();
+          });
+          setTimeout(() => reject(new Error('Server start timeout')), 5000);
+        });
+
+        port = await portPromise;
+
+        // Fetch index.html
+        const response = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
+          http.get(`http://localhost:${port}/`, (res) => {
+            let body = '';
+            res.on('data', chunk => { body += chunk; });
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode || 0, headers: res.headers, body });
+            });
+          }).on('error', reject);
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['content-type']).toContain('text/html');
+        expect(response.body).toContain('<!DOCTYPE html>');
+        expect(response.body).toContain('Nedagram');
+
+      } finally {
+        // Kill the server process
+        serverProcess.kill('SIGTERM');
+      }
+    });
+
+    it('should serve manifest.json with correct content-type', async () => {
+      const serverProcess = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let port = 8000;
+
+      try {
+        const portPromise = new Promise<number>((resolve, reject) => {
+          let output = '';
+          serverProcess.stdout?.on('data', (data) => {
+            output += data.toString();
+            const match = output.match(/http:\/\/localhost:(\d+)/);
+            if (match) resolve(parseInt(match[1], 10));
+          });
+          setTimeout(() => reject(new Error('Server start timeout')), 5000);
+        });
+
+        port = await portPromise;
+
+        // Fetch manifest.json
+        const response = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+          http.get(`http://localhost:${port}/manifest.json`, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode || 0, headers: res.headers });
+            });
+          }).on('error', reject);
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['content-type']).toContain('application/json');
+
+      } finally {
+        serverProcess.kill('SIGTERM');
+      }
+    });
+
+    it('should serve CSS assets with correct content-type', async () => {
+      const serverProcess = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let port = 8000;
+
+      try {
+        const portPromise = new Promise<number>((resolve, reject) => {
+          let output = '';
+          serverProcess.stdout?.on('data', (data) => {
+            output += data.toString();
+            const match = output.match(/http:\/\/localhost:(\d+)/);
+            if (match) resolve(parseInt(match[1], 10));
+          });
+          setTimeout(() => reject(new Error('Server start timeout')), 5000);
+        });
+
+        port = await portPromise;
+
+        // First get index.html to find the CSS filename
+        const indexResponse = await new Promise<string>((resolve, reject) => {
+          http.get(`http://localhost:${port}/`, (res) => {
+            let body = '';
+            res.on('data', chunk => { body += chunk; });
+            res.on('end', () => resolve(body));
+          }).on('error', reject);
+        });
+
+        // Extract CSS filename from index.html
+        const cssMatch = indexResponse.match(/href="\/?(assets\/[^"]+\.css)"/);
+        expect(cssMatch).toBeTruthy();
+        const cssPath = cssMatch![1];
+
+        // Fetch CSS file
+        const response = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+          http.get(`http://localhost:${port}/${cssPath}`, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode || 0, headers: res.headers });
+            });
+          }).on('error', reject);
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['content-type']).toContain('text/css');
+
+      } finally {
+        serverProcess.kill('SIGTERM');
+      }
+    });
+
+    it('should return index.html for SPA routes (fallback)', async () => {
+      const serverProcess = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let port = 8000;
+
+      try {
+        const portPromise = new Promise<number>((resolve, reject) => {
+          let output = '';
+          serverProcess.stdout?.on('data', (data) => {
+            output += data.toString();
+            const match = output.match(/http:\/\/localhost:(\d+)/);
+            if (match) resolve(parseInt(match[1], 10));
+          });
+          setTimeout(() => reject(new Error('Server start timeout')), 5000);
+        });
+
+        port = await portPromise;
+
+        // Fetch a SPA route
+        const response = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
+          http.get(`http://localhost:${port}/receive`, (res) => {
+            let body = '';
+            res.on('data', chunk => { body += chunk; });
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode || 0, headers: res.headers, body });
+            });
+          }).on('error', reject);
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['content-type']).toContain('text/html');
+        expect(response.body).toContain('<!DOCTYPE html>');
+
+      } finally {
+        serverProcess.kill('SIGTERM');
+      }
+    });
+
+    it('should fall back to next port if default is busy', async () => {
+      // Start first server on port 8000
+      const server1 = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q', '-p', '8000'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let port1 = 8000;
+      let port2 = 8001;
+
+      try {
+        // Wait for first server
+        const port1Promise = new Promise<number>((resolve, reject) => {
+          let output = '';
+          server1.stdout?.on('data', (data) => {
+            output += data.toString();
+            const match = output.match(/http:\/\/localhost:(\d+)/);
+            if (match) resolve(parseInt(match[1], 10));
+          });
+          setTimeout(() => reject(new Error('Server 1 start timeout')), 5000);
+        });
+
+        port1 = await port1Promise;
+
+        // Start second server (should use next available port)
+        const server2 = spawn('node', ['dist-cli/nedagram-cli/index.cjs', 'serve', '-q', '-p', String(port1)], {
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        try {
+          const port2Promise = new Promise<number>((resolve, reject) => {
+            let output = '';
+            server2.stdout?.on('data', (data) => {
+              output += data.toString();
+              const match = output.match(/http:\/\/localhost:(\d+)/);
+              if (match) resolve(parseInt(match[1], 10));
+            });
+            setTimeout(() => reject(new Error('Server 2 start timeout')), 5000);
+          });
+
+          port2 = await port2Promise;
+          expect(port2).toBe(port1 + 1);
+
+        } finally {
+          server2.kill('SIGTERM');
+        }
+      } finally {
+        server1.kill('SIGTERM');
+      }
     });
   });
 });

@@ -183,6 +183,7 @@ export const en = {
   },
   errors: {
     microphoneBlocked: 'Microphone access was denied. Please enable it in your browser settings.',
+    insecureContext: 'Microphone access requires HTTPS. You\'re accessing this page over HTTP on a network, which browsers don\'t allow for security reasons. Use localhost or HTTPS.',
     audioContextFailed: 'Failed to initialize audio. Please refresh the page.',
     decompressionFailed: 'Failed to decompress data. The transmission may be corrupted.',
     invalidFrame: 'Received invalid frame data.',

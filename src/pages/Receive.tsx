@@ -47,11 +47,15 @@ export function Receive() {
     setIsRequestingPermission(true);
 
     // Request permission on button click (required for iOS)
-    const hasPermission = await requestMicrophonePermission();
+    const permissionResult = await requestMicrophonePermission();
     setIsRequestingPermission(false);
 
-    if (!hasPermission) {
-      errorMessage.value = t.errors.microphoneBlocked;
+    if (permissionResult !== 'granted') {
+      if (permissionResult === 'insecure-context') {
+        errorMessage.value = t.errors.insecureContext;
+      } else {
+        errorMessage.value = t.errors.microphoneBlocked;
+      }
       debugInfo.value = '';
       return;
     }

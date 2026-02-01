@@ -9,6 +9,27 @@ export interface RecorderCallbacks {
   onLevelChange?: (level: number) => void;
 }
 
+export type MicrophonePermissionResult = 'granted' | 'denied' | 'insecure-context';
+
+/**
+ * Check if we're in a secure context (HTTPS or localhost)
+ */
+export function isSecureContext(): boolean {
+  // Check if the browser reports secure context
+  if (typeof window !== 'undefined' && 'isSecureContext' in window) {
+    return window.isSecureContext;
+  }
+  // Fallback: check protocol and hostname
+  if (typeof location !== 'undefined') {
+    const isLocalhost = location.hostname === 'localhost' ||
+                        location.hostname === '127.0.0.1' ||
+                        location.hostname === '[::1]' ||
+                        location.hostname.endsWith('.localhost');
+    return location.protocol === 'https:' || isLocalhost;
+  }
+  return true; // Assume secure if we can't check
+}
+
 let mediaStream: MediaStream | null = null;
 let analyserNode: AnalyserNode | null = null;
 let processorNode: ScriptProcessorNode | null = null;
@@ -21,8 +42,14 @@ let recordingSampleRate = 48000;
 
 /**
  * Request microphone permission
+ * Returns 'granted', 'denied', or 'insecure-context' for HTTP on network
  */
-export async function requestMicrophonePermission(): Promise<boolean> {
+export async function requestMicrophonePermission(): Promise<MicrophonePermissionResult> {
+  // Check for insecure context first
+  if (!isSecureContext()) {
+    return 'insecure-context';
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -35,9 +62,18 @@ export async function requestMicrophonePermission(): Promise<boolean> {
 
     // Stop the stream immediately, we just needed permission
     stream.getTracks().forEach(track => track.stop());
-    return true;
-  } catch {
-    return false;
+    return 'granted';
+  } catch (err) {
+    // NotAllowedError can mean either user denied or insecure context
+    // NotFoundError means no microphone device
+    // NotReadableError means device is in use or hardware error
+    if (err instanceof Error) {
+      // Some browsers throw NotAllowedError for insecure contexts
+      if (err.name === 'NotAllowedError' && !isSecureContext()) {
+        return 'insecure-context';
+      }
+    }
+    return 'denied';
   }
 }
 
