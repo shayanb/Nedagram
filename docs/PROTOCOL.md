@@ -77,7 +77,12 @@ A complete transmission consists of four parts:
 
 ## Preamble
 
-The preamble provides automatic gain control (AGC) settling, mode detection, and symbol synchronization.
+The preamble provides automatic gain control (AGC) settling, mode detection, and symbol synchronization:
+
+- **Warmup tone**: Allows receiver's AGC to stabilize before data
+- **Chirp**: Enables mode identification (Phone vs Wideband) and coarse timing sync
+- **Calibration tones**: Helps adjust for amplitude and frequency offset
+- **Sync pattern**: Establishes precise frame alignment before data begins
 
 ### Preamble Sequence
 
@@ -102,29 +107,29 @@ The chirp is a linear frequency sweep used for timing synchronization and mode d
 Phone Mode Chirp (800ms total):
 
   Freq (Hz)
-   2600 ─┐                    ╱╲
-         │                   ╱  ╲
-   1600 ─┤                 ╱    ╲
-         │               ╱        ╲
-    600 ─┴─────────────╱──────────╲──────────────
-         0           400ms        800ms
-                   ▲
-                   └── Peak (chirp end detection point)
+   2600 ─┤            ╱╲
+         │           ╱  ╲
+   1600 ─┤          ╱    ╲
+         │         ╱      ╲
+    600 ─┼────────╱        ╲────────
+         0      200ms     400ms    800ms
+                  ▲
+                  └── Peak (chirp end detection point)
 
 Wideband Mode Chirp (1200ms total):
 
   Freq (Hz)
-   4000 ─┐                    ╱╲
-         │                   ╱  ╲
-   2500 ─┤                 ╱    ╲
-         │               ╱        ╲
-   1000 ─┴─────────────╱──────────╲──────────────
-         0           600ms       1200ms
+   4000 ─┤            ╱╲
+         │           ╱  ╲
+   2500 ─┤          ╱    ╲
+         │         ╱      ╲
+   1000 ─┼────────╱        ╲────────
+         0      300ms     600ms   1200ms
 ```
 
 ### Calibration Tones
 
-Known tone sequence for amplitude/frequency calibration:
+Known tone sequence for amplitude/frequency calibration. By measuring these predetermined tones, the receiver can adjust for channel gain and frequency response before decoding data frames:
 
 ```
 Phone Mode: Tones [0, 1, 2, 3] repeated 2×
@@ -153,6 +158,8 @@ Phone:    [0, 3, 0, 3, 0, 3, 0, 3]  →  [800, 2300, 800, 2300, ...] Hz
 Wideband: [0, 15, 0, 15, 0, 15, 0, 15]  →  [1800, 5700, 1800, 5700, ...] Hz
 ```
 
+> **Note**: This sync sequence is also reused at the end of the transmission as the end marker.
+
 ---
 
 ## Frame Format
@@ -174,6 +181,8 @@ Wideband: [0, 15, 0, 15, 0, 15, 0, 15]  →  [1800, 5700, 1800, 5700, ...] Hz
 Flags (byte 2, low nibble):
   Bit 0 (0x01): COMPRESSED - Data is DEFLATE compressed
   Bit 1 (0x02): ENCRYPTED  - Data is ChaCha20 encrypted
+  Bit 2 (0x04): Reserved   - Must be 0
+  Bit 3 (0x08): Reserved   - Must be 0
 ```
 
 **Field Details:**
@@ -185,8 +194,10 @@ Flags (byte 2, low nibble):
 | 3 | 1 | Frame Count | Total number of data frames (1-255) |
 | 4-5 | 2 | Payload Length | Compressed/encrypted payload size (little-endian) |
 | 6-7 | 2 | Original Length | Original uncompressed size (little-endian) |
-| 8-9 | 2 | Session ID | Random identifier for this transmission |
-| 10-11 | 2 | CRC16 | CRC16-CCITT of bytes 0-9 |
+| 8-9 | 2 | Session ID | Random identifier to tag this transmission |
+| 10-11 | 2 | CRC16 | CRC16-CCITT of bytes 0-9 (header integrity) |
+
+> **Note**: With 255 frames of up to 128 bytes each, a single transmission can carry ~32 KB of payload. Larger data requires multiple transmissions.
 
 ### Data Frame (3 + N bytes)
 
@@ -270,7 +281,7 @@ Tone Index    Frequency
 
 ### Symbol Waveform
 
-Each symbol is a sine wave with Hann window fade:
+Each symbol is a sine wave with Hann window fade in/out. The taper smooths the symbol's edges to reduce spectral splatter and inter-symbol interference:
 
 ```
 Amplitude
@@ -288,7 +299,7 @@ Amplitude
 
 ## Encryption
 
-When enabled, encryption adds 44 bytes of overhead and sets the ENCRYPTED flag.
+When enabled, encryption adds 44 bytes of overhead and sets the ENCRYPTED flag. Both sender and receiver must use the same password.
 
 ### Encryption Overhead
 
@@ -339,6 +350,17 @@ Original Data
 └─────────────┘
 ```
 
+### Encryption Process
+
+1. A random 16-byte **salt** is generated per transmission (sent in plaintext)
+2. The password + salt are combined using **PBKDF2-SHA256** (100k iterations) to derive the 256-bit key
+3. A random 12-byte **nonce** is generated for ChaCha20
+4. The plaintext (after optional compression) is encrypted with **ChaCha20-Poly1305**
+5. The 16-byte **Poly1305 auth tag** is appended to verify integrity
+6. On decryption, if the auth tag check fails, the data is rejected
+
+> **Security Note**: The security relies on password strength. Use a strong, unique password since an eavesdropper capturing the audio could attempt offline brute-force attacks.
+
 ---
 
 ## Error Correction
@@ -349,6 +371,10 @@ Nedagram v3 uses concatenated FEC (similar to NASA's Voyager):
 Data ──► RS Encode ──► Scramble ──► Convolutional Encode ──► Symbols
          (outer)       (LFSR)       (inner)
 ```
+
+- **Reed-Solomon (outer)**: Corrects burst errors (up to 8 bytes per frame)
+- **Convolutional (inner)**: Corrects random bit errors via Viterbi decoding
+- **LFSR scrambler**: Ensures no long repetitive patterns, spreads errors for better correction
 
 ### Reed-Solomon (Outer Code)
 
@@ -443,6 +469,8 @@ For detailed FEC math, see [Technical Specs in README](../README.md#technical-sp
 | **COMPLETE** | Transmission successful | - |
 | **ERROR** | Failure (timeout/corruption) | - |
 
+> After COMPLETE or ERROR, the decoder resets to IDLE for the next transmission.
+
 ### Detection Parameters
 
 | Parameter | Value |
@@ -454,6 +482,11 @@ For detailed FEC math, see [Technical Specs in README](../README.md#technical-sp
 | Header Retry Phases | 4 |
 | Header Retry Offsets | ±1, ±2 symbols |
 | Max Header Failures | 15 (then try other mode) |
+
+**Parameter Notes:**
+- *Chirp correlation*: May be lowered to 0.3 adaptively if chirp isn't initially found
+- *Header retry offsets*: Decoder attempts to realign ±1 or ±2 symbol intervals if first decode fails
+- *Max header failures*: After 15 failures in one mode, receiver restarts and tries the other mode
 
 ---
 
@@ -481,6 +514,8 @@ Time (seconds)
 
 Total: ~50 seconds for 100 bytes (Phone mode)
 ```
+
+> **Note**: Wideband mode transfers the same 100 bytes in ~20 seconds due to its higher bit rate (4 bits/symbol vs 2).
 
 ### Symbol Timing Detail
 
