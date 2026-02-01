@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { encodeString } from '../../src/encode';
 import { tryCompress, decompress } from '../../src/encode/compress';
-import { packetize, createHeaderFrame, createDataFrame } from '../../src/encode/frame';
+import { packetize, createHeaderFrame, createDataFrame, FLAG_CRC32_PRESENT } from '../../src/encode/frame';
 import { parseHeaderFrame, parseDataFrame, FrameCollector } from '../../src/decode/deframe';
+import { processPayload } from '../../src/decode/decompress';
 import { encodeDataV3FEC, V3_FEC_CONFIG } from '../../src/encode/v3-fec';
 import { decodeDataV3FEC } from '../../src/decode/v3-fec';
 import { stringToBytes, bytesToString } from '../../src/utils/helpers';
+import { crc32Bytes } from '../../src/lib/crc32';
 
 describe('End-to-End Roundtrip', () => {
   describe('Compression roundtrip', () => {
@@ -57,6 +59,110 @@ describe('End-to-End Roundtrip', () => {
       expect(parsed!.payloadLength).toBe(128);
       expect(parsed!.payload).toEqual(payload);
       expect(parsed!.crcValid).toBe(true); // RS handles errors, always true
+    });
+
+    it('should set CRC32 flag for unencrypted data', () => {
+      const { frame } = createHeaderFrame(
+        5,      // totalFrames
+        1024,   // payloadLength
+        2048,   // originalLength
+        true,   // compressed
+        false,  // encrypted
+        true    // hasCrc32
+      );
+
+      const parsed = parseHeaderFrame(frame);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.hasCrc32).toBe(true);
+      expect(parsed!.encrypted).toBe(false);
+    });
+
+    it('should not set CRC32 flag for encrypted data', () => {
+      const { frame } = createHeaderFrame(
+        5,      // totalFrames
+        1024,   // payloadLength
+        2048,   // originalLength
+        true,   // compressed
+        true,   // encrypted
+        false   // hasCrc32 - encrypted data uses Poly1305 auth tag instead
+      );
+
+      const parsed = parseHeaderFrame(frame);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.hasCrc32).toBe(false);
+      expect(parsed!.encrypted).toBe(true);
+    });
+  });
+
+  describe('CRC32 integrity verification', () => {
+    it('should verify valid CRC32 for unencrypted data', async () => {
+      const originalData = stringToBytes('Test data for CRC32 verification');
+      const { data: compressed, compressed: wasCompressed } = tryCompress(originalData);
+
+      // Append CRC32 (as done in encode pipeline)
+      const crc = crc32Bytes(compressed);
+      const withCrc = new Uint8Array(compressed.length + 4);
+      withCrc.set(compressed);
+      withCrc.set(crc, compressed.length);
+
+      // Process with CRC32 verification
+      const result = await processPayload(
+        withCrc,
+        false,  // encrypted
+        wasCompressed,
+        wasCompressed ? 1 : 0, // compressionAlgo
+        originalData.length,
+        true    // hasCrc32
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+      expect(bytesToString(result.data!)).toBe('Test data for CRC32 verification');
+    });
+
+    it('should detect CRC32 mismatch', async () => {
+      const originalData = stringToBytes('Test data for CRC32 verification');
+      const { data: compressed, compressed: wasCompressed } = tryCompress(originalData);
+
+      // Append CRC32
+      const crc = crc32Bytes(compressed);
+      const withCrc = new Uint8Array(compressed.length + 4);
+      withCrc.set(compressed);
+      withCrc.set(crc, compressed.length);
+
+      // Corrupt the data (not the CRC)
+      withCrc[5] ^= 0xFF;
+
+      // Process with CRC32 verification - should fail
+      const result = await processPayload(
+        withCrc,
+        false,  // encrypted
+        wasCompressed,
+        wasCompressed ? 1 : 0,
+        originalData.length,
+        true    // hasCrc32
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('CRC32 mismatch');
+    });
+
+    it('should work without CRC32 for backward compatibility', async () => {
+      // Older transmissions without CRC32 should still work
+      const data = stringToBytes('Data without CRC32');
+
+      // Process without CRC32 flag (backward compatible)
+      const result = await processPayload(
+        data,
+        false,  // not encrypted
+        false,  // not compressed
+        0,      // no compression
+        data.length,
+        false   // hasCrc32 = false (old format)
+      );
+
+      expect(result.success).toBe(true);
+      expect(bytesToString(result.data!)).toBe('Data without CRC32');
     });
   });
 

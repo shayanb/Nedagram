@@ -21,8 +21,9 @@ import { ProtocolVersion } from '../encode/frame';
 import { readUint16LE, bytesToString } from '../utils/helpers';
 
 // Flag bits (must match encode/frame.ts)
-const FLAG_COMPRESSED = 0x01;  // bit 0: data is compressed
-const FLAG_ENCRYPTED = 0x02;   // bit 1: data is encrypted
+const FLAG_COMPRESSED = 0x01;     // bit 0: data is compressed
+const FLAG_ENCRYPTED = 0x02;      // bit 1: data is encrypted
+const FLAG_CRC32_PRESENT = 0x04;  // bit 2: CRC32 appended to payload (for unencrypted data)
 
 export interface HeaderInfo {
   magic: string;
@@ -35,6 +36,8 @@ export interface HeaderInfo {
   compressionAlgo: number;
   compressed: boolean;
   encrypted: boolean;
+  /** CRC32 is appended to payload (for unencrypted data integrity) */
+  hasCrc32: boolean;
   crcValid: boolean;
   /** Protocol version detected from magic bytes */
   protocolVersion: ProtocolVersion;
@@ -114,6 +117,7 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
     compressionAlgo: flags & 0x0F, // Compression in flags
     compressed: (flags & FLAG_COMPRESSED) !== 0,
     encrypted: (flags & FLAG_ENCRYPTED) !== 0,
+    hasCrc32: (flags & FLAG_CRC32_PRESENT) !== 0,
     crcValid,
     protocolVersion,
   };

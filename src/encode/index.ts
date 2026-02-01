@@ -12,6 +12,7 @@ import { interleave, calculateInterleaverDepth } from './interleave';
 import { generateTransmission, calculateDuration } from './modulate';
 import { sha256Hex } from '../lib/sha256';
 import { encrypt, ENCRYPTION_OVERHEAD } from '../lib/crypto';
+import { crc32Bytes } from '../lib/crc32';
 
 /**
  * Preprocess text for optimal compression:
@@ -120,8 +121,19 @@ export async function encodeBytes(
 
   // Encrypt if password provided (after compression, before framing)
   let processedData = maybeCompressed;
+  let hasCrc32 = false;
+
   if (encrypted) {
+    // Encrypted data has Poly1305 auth tag, no need for CRC32
     processedData = await encrypt(maybeCompressed, password);
+  } else {
+    // For unencrypted data, append CRC32 for integrity verification
+    const crc = crc32Bytes(maybeCompressed);
+    const withCrc = new Uint8Array(maybeCompressed.length + 4);
+    withCrc.set(maybeCompressed);
+    withCrc.set(crc, maybeCompressed.length);
+    processedData = withCrc;
+    hasCrc32 = true;
   }
 
   // Packetize into frames with v3 protocol
@@ -130,6 +142,7 @@ export async function encodeBytes(
     data.length,
     compressed,
     encrypted,
+    hasCrc32,
     'v3'
   );
 
@@ -164,7 +177,8 @@ export async function encodeBytes(
     checksum,
     stats: {
       originalSize: data.length,
-      compressedSize: processedData.length,
+      // Report size without CRC32 overhead for display purposes
+      compressedSize: hasCrc32 ? processedData.length - 4 : processedData.length,
       compressed,
       encrypted,
       frameCount: dataFrames.length,

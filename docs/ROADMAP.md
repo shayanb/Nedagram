@@ -225,8 +225,8 @@ New mode using near-ultrasonic frequencies (16-20 kHz):
 ## Recommended Roadmap
 
 ### v3.1 (Near-term)
-- [ ] Add CRC32 for unencrypted payloads
-- [ ] Document reserved flag usage
+- [x] Add CRC32 for unencrypted payloads (implemented in v3.1.2)
+- [x] Document reserved flag usage (see below)
 
 ### v3.2 (Medium-term)
 - [ ] Implement FEC profiles (Light/Normal/Heavy)
@@ -246,3 +246,38 @@ New mode using near-ultrasonic frequencies (16-20 kHz):
 3. **Real demand**: Only implement features users actually need
 4. **Robustness over speed**: Nedagram prioritizes reliability; speed is secondary
 5. **Offline-first**: No features requiring internet or external services
+
+---
+
+## Header Flag Definitions (v3.1+)
+
+The header byte 2 contains version (high 4 bits) and flags (low 4 bits):
+
+```
+Byte 2: [VVVV][FFFF]
+        Version  Flags
+```
+
+### Current Flag Usage
+
+| Bit | Hex  | Name | Description |
+|-----|------|------|-------------|
+| 0 | 0x01 | `FLAG_COMPRESSED` | Data is DEFLATE compressed |
+| 1 | 0x02 | `FLAG_ENCRYPTED` | Data is ChaCha20-Poly1305 encrypted |
+| 2 | 0x04 | `FLAG_CRC32_PRESENT` | CRC32 appended to payload (unencrypted only) |
+| 3 | 0x08 | Reserved | Available for future use |
+
+### CRC32 Implementation (v3.1.2)
+
+When `FLAG_CRC32_PRESENT` (0x04) is set:
+
+1. **Encoder**: Appends 4-byte CRC32 (little-endian) after compressed payload, before framing
+2. **Decoder**: Extracts and verifies CRC32 before decompression
+3. **Only for unencrypted data**: Encrypted data uses Poly1305 auth tag instead
+
+```
+Payload format with CRC32:
+  [Compressed Data] [CRC32 (4 bytes LE)]
+```
+
+This provides end-to-end integrity verification for unencrypted transmissions, matching the protection that encrypted transmissions get from the Poly1305 authentication tag.

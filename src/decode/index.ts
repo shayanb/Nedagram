@@ -205,6 +205,7 @@ export class Decoder {
       this.headerInfo.compressed,
       this.headerInfo.compressionAlgo,
       this.headerInfo.originalLength,
+      this.headerInfo.hasCrc32,
       password
     );
 
@@ -1474,13 +1475,14 @@ export class Decoder {
       // Store payload in case we need to retry with different password
       this.pendingPayload = payload;
 
-      // Process payload: decrypt (if needed) then decompress
+      // Process payload: verify CRC32, decrypt (if needed), then decompress
       const result = await processPayload(
         payload,
         this.headerInfo.encrypted,
         this.headerInfo.compressed,
         this.headerInfo.compressionAlgo,
         this.headerInfo.originalLength,
+        this.headerInfo.hasCrc32,
         this.password || undefined
       );
 

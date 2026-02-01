@@ -179,10 +179,10 @@ Wideband: [0, 15, 0, 15, 0, 15, 0, 15]  →  [1800, 5700, 1800, 5700, ...] Hz
                    └─ Version (high nibble) + Flags (low nibble)
 
 Flags (byte 2, low nibble):
-  Bit 0 (0x01): COMPRESSED - Data is DEFLATE compressed
-  Bit 1 (0x02): ENCRYPTED  - Data is ChaCha20 encrypted
-  Bit 2 (0x04): Reserved   - Must be 0
-  Bit 3 (0x08): Reserved   - Must be 0
+  Bit 0 (0x01): COMPRESSED    - Data is DEFLATE compressed
+  Bit 1 (0x02): ENCRYPTED     - Data is ChaCha20 encrypted
+  Bit 2 (0x04): CRC32_PRESENT - CRC32 appended to payload (unencrypted only)
+  Bit 3 (0x08): Reserved      - Must be 0
 ```
 
 **Field Details:**
@@ -360,6 +360,25 @@ Original Data
 6. On decryption, if the auth tag check fails, the data is rejected
 
 > **Security Note**: The security relies on password strength. Use a strong, unique password since an eavesdropper capturing the audio could attempt offline brute-force attacks.
+
+### Integrity for Unencrypted Data (CRC32)
+
+When encryption is disabled, a 4-byte CRC32 checksum is appended to provide data integrity verification. This is similar to the Poly1305 auth tag that protects encrypted data.
+
+```
+Unencrypted payload format:
+┌─────────────────────────────────┬───────────────┐
+│  Compressed Data (N bytes)      │  CRC32 (4B)   │
+└─────────────────────────────────┴───────────────┘
+                                  └─ Little-endian
+```
+
+- **When set**: `FLAG_CRC32_PRESENT` (0x04) is set in header flags
+- **Calculation**: IEEE CRC32 of compressed data (before framing)
+- **Verification**: Receiver checks CRC32 before decompression
+- **On mismatch**: Decode fails with "Data integrity check failed"
+
+> **Note**: CRC32 is only used for unencrypted transmissions. Encrypted data is already protected by the Poly1305 authentication tag, making CRC32 redundant.
 
 ---
 
@@ -578,8 +597,9 @@ DATA_MAGIC   = "D"  (0x44)
 VERSION      = 0x03
 
 // Flags
-FLAG_COMPRESSED = 0x01
-FLAG_ENCRYPTED  = 0x02
+FLAG_COMPRESSED    = 0x01
+FLAG_ENCRYPTED     = 0x02
+FLAG_CRC32_PRESENT = 0x04  // CRC32 appended to payload (unencrypted only)
 
 // Frame sizes
 HEADER_SIZE     = 12 bytes

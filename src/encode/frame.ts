@@ -62,8 +62,9 @@ function crc16(data: Uint8Array): number {
 }
 
 // Flag bits
-export const FLAG_COMPRESSED = 0x01;  // bit 0: data is compressed
-export const FLAG_ENCRYPTED = 0x02;   // bit 1: data is encrypted
+export const FLAG_COMPRESSED = 0x01;     // bit 0: data is compressed
+export const FLAG_ENCRYPTED = 0x02;      // bit 1: data is encrypted
+export const FLAG_CRC32_PRESENT = 0x04;  // bit 2: CRC32 appended to payload (for unencrypted data)
 
 /**
  * Create a compact header frame (12 bytes)
@@ -75,6 +76,7 @@ export const FLAG_ENCRYPTED = 0x02;   // bit 1: data is encrypted
  * @param originalLength - Original uncompressed length
  * @param compressed - Whether data is compressed
  * @param encrypted - Whether data is encrypted
+ * @param hasCrc32 - Whether CRC32 is appended to payload (for unencrypted data)
  * @param sessionId - Optional session ID (auto-generated if not provided)
  * @param protocolVersion - Protocol version (reserved for future use)
  */
@@ -84,6 +86,7 @@ export function createHeaderFrame(
   originalLength: number,
   compressed: boolean,
   encrypted: boolean = false,
+  hasCrc32: boolean = false,
   sessionId?: number,
   protocolVersion: ProtocolVersion = 'v3'
 ): { frame: Uint8Array; sessionId: number } {
@@ -97,6 +100,7 @@ export function createHeaderFrame(
   let flags = 0;
   if (compressed) flags |= FLAG_COMPRESSED;
   if (encrypted) flags |= FLAG_ENCRYPTED;
+  if (hasCrc32) flags |= FLAG_CRC32_PRESENT;
   const versionFlags = ((FRAME_V3.CURRENT_VERSION & 0x0F) << 4) | (flags & 0x0F);
   frame[2] = versionFlags;
 
@@ -165,6 +169,7 @@ function getOptimalFrameSize(totalPayload: number): number {
  * @param originalLength - Original uncompressed length
  * @param compressed - Whether data is compressed
  * @param encrypted - Whether data is encrypted
+ * @param hasCrc32 - Whether CRC32 is appended to payload
  * @param protocolVersion - Reserved for future use
  */
 export function packetize(
@@ -172,6 +177,7 @@ export function packetize(
   originalLength: number,
   compressed: boolean,
   encrypted: boolean = false,
+  hasCrc32: boolean = false,
   protocolVersion: ProtocolVersion = 'v3'
 ): { headerFrame: Uint8Array; dataFrames: Uint8Array[]; sessionId: number } {
   // Use optimal frame size based on payload
@@ -186,7 +192,8 @@ export function packetize(
     payload.length,
     originalLength,
     compressed,
-    encrypted
+    encrypted,
+    hasCrc32
   );
 
   // Create data frames with minimal overhead
