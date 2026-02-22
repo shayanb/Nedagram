@@ -26,7 +26,7 @@ Examples:
   $ nedagram decode encrypted.wav -p secret
   $ nedagram serve
 
-For more information, visit: https://github.com/AHK-Labs/Nedagram`);
+For more information, visit: https://github.com/shayanb/Nedagram`);
 
 // Encode command
 program
