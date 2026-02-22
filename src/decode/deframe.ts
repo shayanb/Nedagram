@@ -114,7 +114,7 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
     totalFrames: frame[3],
     payloadLength: readUint16LE(frame, 4),
     originalLength: readUint16LE(frame, 6),
-    compressionAlgo: flags & 0x0F, // Compression in flags
+    compressionAlgo: (flags & FLAG_COMPRESSED) !== 0 ? 1 : 0, // 1=deflate if compressed, 0=none
     compressed: (flags & FLAG_COMPRESSED) !== 0,
     encrypted: (flags & FLAG_ENCRYPTED) !== 0,
     hasCrc32: (flags & FLAG_CRC32_PRESENT) !== 0,
