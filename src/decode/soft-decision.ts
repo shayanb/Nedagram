@@ -184,6 +184,69 @@ export function extractSoftMatrix(softResults: SoftDetectionResult[]): SoftSymbo
 }
 
 /**
+ * Convert soft symbol detections to soft bit values for Viterbi decoder.
+ *
+ * For each symbol, compute P(bit_k = 1) by summing soft values of all tones
+ * where bit k is 1, divided by the total soft value sum. This produces
+ * per-bit probabilities (0.0 = definitely 0, 1.0 = definitely 1) that the
+ * Viterbi decoder uses for soft-decision decoding (~2-3 dB gain over hard).
+ *
+ * Phone mode (4 tones, 2 bits/symbol):
+ *   Tone 0 = 00, Tone 1 = 01, Tone 2 = 10, Tone 3 = 11
+ *   P(MSB=1) = (soft[2] + soft[3]) / total
+ *   P(LSB=1) = (soft[1] + soft[3]) / total
+ *
+ * Wideband mode (16 tones, 4 bits/symbol):
+ *   Tone index = b3 b2 b1 b0 (MSB first)
+ *   P(bit_k=1) = sum of soft[t] for all t where bit k of t is 1
+ *
+ * @param softResults - Array of soft detection results (one per symbol)
+ * @param bitsPerSymbol - Number of bits per symbol (2 for phone, 4 for wideband)
+ * @returns Array of soft bit values (0.0-1.0), MSB first per symbol
+ */
+export function softSymbolsToSoftBits(
+  softResults: SoftDetectionResult[],
+  bitsPerSymbol: number
+): number[] {
+  const softBits: number[] = [];
+  const numTones = 1 << bitsPerSymbol; // 4 for phone, 16 for wideband
+
+  for (const result of softResults) {
+    const soft = result.softValues;
+    const toneCount = Math.min(soft.length, numTones);
+
+    // Calculate total confidence for normalization
+    let total = 0;
+    for (let t = 0; t < toneCount; t++) {
+      total += soft[t];
+    }
+
+    // If total is 0 (silence/no signal), fall back to hard decision
+    if (total === 0) {
+      const hard = result.hardDecision;
+      for (let b = bitsPerSymbol - 1; b >= 0; b--) {
+        softBits.push((hard >> b) & 1 ? 1.0 : 0.0);
+      }
+      continue;
+    }
+
+    // For each bit position (MSB first, matching symbolsToBytes packing)
+    for (let b = bitsPerSymbol - 1; b >= 0; b--) {
+      // P(bit_b = 1) = sum of soft[t] for all tones where bit b is 1
+      let pOne = 0;
+      for (let t = 0; t < toneCount; t++) {
+        if ((t >> b) & 1) {
+          pOne += soft[t];
+        }
+      }
+      softBits.push(pOne / total);
+    }
+  }
+
+  return softBits;
+}
+
+/**
  * Calculate average confidence from soft results
  */
 export function averageConfidence(softResults: SoftDetectionResult[]): number {

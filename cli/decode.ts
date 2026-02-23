@@ -9,6 +9,7 @@ import { Decoder } from '../src/decode/index.js';
 interface DecodeOptions {
   output?: string;
   password?: string;
+  salvage?: boolean;
   quiet?: boolean;
   json?: boolean;
 }
@@ -73,6 +74,12 @@ export async function decodeCommand(
       // Set password after start() since start() calls reset() which clears it
       if (options.password) {
         decoder.setPassword(options.password);
+      }
+
+      // Enable salvage mode for best-effort recovery
+      if (options.salvage) {
+        decoder.setSalvageMode(true);
+        log('Salvage mode enabled: relaxed thresholds, extended timeouts');
       }
 
       // Feed samples in chunks

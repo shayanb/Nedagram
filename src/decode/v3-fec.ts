@@ -236,6 +236,44 @@ export function decodeHeaderV3FECWithRedundancy(
 }
 
 /**
+ * Decode header with soft redundancy combining (two copies).
+ * Averages soft bit values from both copies before Viterbi decoding.
+ * This provides ~3dB combining gain over using a single copy.
+ */
+export function decodeHeaderV3FECSoftWithRedundancy(
+  softBits1: number[],
+  softBits2: number[]
+): V3FECDecodeResult {
+  // Average soft values from both copies for maximum combining gain
+  const minLen = Math.min(softBits1.length, softBits2.length);
+  const combined: number[] = new Array(minLen);
+  for (let i = 0; i < minLen; i++) {
+    combined[i] = (softBits1[i] + softBits2[i]) / 2;
+  }
+
+  const combinedResult = decodeV3FECSoft(combined, 'header');
+  if (combinedResult.success) {
+    console.log('[v3-FEC] Soft redundancy combining succeeded');
+    return combinedResult;
+  }
+
+  // Fallback: try each copy independently
+  const result1 = decodeV3FECSoft(softBits1, 'header');
+  if (result1.success) {
+    console.log('[v3-FEC] Soft decode from copy1 (copy2 failed)');
+    return result1;
+  }
+
+  const result2 = decodeV3FECSoft(softBits2, 'header');
+  if (result2.success) {
+    console.log('[v3-FEC] Soft decode from copy2 (copy1 failed)');
+    return result2;
+  }
+
+  return result1;
+}
+
+/**
  * Get expected v3 encoded size for header
  * Used to calculate how many symbols to read
  */

@@ -76,6 +76,45 @@ export function calculateInterleaverDepth(frameSize: number): number {
 }
 
 /**
+ * De-interleave soft bits in byte-sized groups.
+ *
+ * The interleaver operates on bytes. When working with soft bits (float values
+ * for Viterbi decoding), we group them into chunks of 8 (one byte's worth)
+ * and permute the chunks using the same logic as byte-level deinterleaving.
+ *
+ * @param softBits - Interleaved soft bit values (0.0-1.0)
+ * @param rows - Interleaver depth (same as byte-level deinterleaving)
+ * @param originalByteCount - Number of original bytes
+ * @returns Deinterleaved soft bits
+ */
+export function deinterleaveSoftBits(
+  softBits: number[],
+  rows: number,
+  originalByteCount: number
+): number[] {
+  const len = originalByteCount;
+  if (len === 0 || rows <= 1) return softBits.slice(0, len * 8);
+
+  const cols = Math.ceil(len / rows);
+  const result = new Array<number>(len * 8);
+
+  // Same permutation as deinterleave(), but on groups of 8 soft bits
+  let readIdx = 0;
+  for (let col = 0; col < cols; col++) {
+    const numInCol = Math.ceil((len - col) / cols);
+    for (let row = 0; row < numInCol; row++) {
+      const writeByteIdx = row * cols + col;
+      for (let bit = 0; bit < 8; bit++) {
+        result[writeByteIdx * 8 + bit] = softBits[readIdx * 8 + bit];
+      }
+      readIdx++;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Interleave a complete transmission (all frames concatenated)
  */
 export function interleaveTransmission(frames: Uint8Array[]): {
