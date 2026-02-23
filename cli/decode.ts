@@ -56,13 +56,14 @@ export async function decodeCommand(
     let lastState = '';
 
     // Wrap in promise for async completion
-    const result = await new Promise<{ text: string; checksum: string; encrypted: boolean; stats: { originalSize: number; compressed: boolean } }>((resolve, reject) => {
+    const result = await new Promise<{ text: string; checksum: string; encrypted: boolean; needsPassword?: boolean; stats: { originalSize: number; compressed: boolean } }>((resolve, reject) => {
       decoder.start(
         (result) => {
           resolve({
             text: result.text,
             checksum: result.checksum,
             encrypted: result.encrypted,
+            needsPassword: result.needsPassword,
             stats: result.stats as { originalSize: number; compressed: boolean },
           });
         },
@@ -143,6 +144,23 @@ export async function decodeCommand(
 
       processChunk();
     });
+
+    // Handle encrypted files that need a password
+    if (result.needsPassword) {
+      if (options.json) {
+        console.log(JSON.stringify({
+          success: false,
+          encrypted: true,
+          error: 'Encrypted file requires a password. Use -p <password> to decrypt.',
+          bytes: result.stats.originalSize,
+        }, null, 2));
+        process.exit(1);
+      }
+      console.error('\nThis file is encrypted.');
+      console.error('Use -p <password> to decrypt:');
+      console.error(`  nedagram decode -p <password> "${filePath}"`);
+      process.exit(1);
+    }
 
     // JSON output mode
     if (options.json) {
