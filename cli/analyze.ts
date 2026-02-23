@@ -4,16 +4,31 @@
  * Reads a WAV file and reports signal quality diagnostics
  * without attempting a full decode. Useful for diagnosing
  * why a decode might fail.
+ *
+ * Enhanced with:
+ * - Frequency offset estimation from calibration tones
+ * - Per-symbol spectral dump for header region
+ * - Frequency-compensated comparison showing symbol corrections
  */
 
 import { parseWavFile } from './wav-io.js';
-import { AUDIO, PHONE_MODE, WIDEBAND_MODE, setAudioMode, type AudioMode } from '../src/utils/constants.js';
+import { AUDIO, PHONE_MODE, WIDEBAND_MODE, setAudioMode, TONE_FREQUENCIES, type AudioMode } from '../src/utils/constants.js';
 import { ChirpDetector } from '../src/lib/chirp.js';
 import { detectToneSoft, averageConfidence, measureSignalQuality, type SoftDetectionResult } from '../src/decode/soft-decision.js';
+import { FrequencyOffsetTracker, type FrequencyOffsetResult, type ToneMeasurement } from '../src/decode/freq-offset.js';
 
 interface AnalyzeOptions {
   json?: boolean;
   quiet?: boolean;
+}
+
+interface SymbolDump {
+  symbolIndex: number;
+  hardDecision: number;
+  confidence: number;
+  softValues: number[];
+  peakFrequencies: number[];
+  compensatedDecision?: number;
 }
 
 interface AnalyzeResult {
@@ -27,6 +42,14 @@ interface AnalyzeResult {
   estimatedSymbolErrorRate: number;
   peakEnergy: number;
   recommendation: string;
+  frequencyOffset?: {
+    offsetHz: number;
+    confidence: number;
+    measurements: ToneMeasurement[];
+  };
+  headerSymbolDump?: SymbolDump[];
+  symbolsFlipped?: number;
+  totalHeaderSymbols?: number;
 }
 
 export async function analyzeCommand(
@@ -70,29 +93,16 @@ export async function analyzeCommand(
       }
     }
 
-    if (!chirpDetected) {
-      const result: AnalyzeResult = {
-        file: filePath,
-        duration,
-        sampleRate,
-        chirpDetected: false,
-        detectedMode: null,
-        signalQuality: 0,
-        averageConfidence: 0,
-        estimatedSymbolErrorRate: 1.0,
-        peakEnergy: computePeakEnergy(samples),
-        recommendation: 'No preamble detected. The file may not contain a Nedagram signal, or the signal is too weak.',
-      };
-      outputResult(result, options, log);
-      return;
+    if (chirpDetected) {
+      log('Preamble chirp detected!');
+    } else {
+      log('Chirp not detected by matched filter, trying pattern search...');
     }
 
-    log('Preamble chirp detected!');
-
     // Step 2: Extract symbols with soft detection for both modes and find calibration
+    // If chirp detected, start from chirp end. Otherwise scan from beginning.
     const symbolSamples = Math.floor((AUDIO.SYMBOL_DURATION_MS / 1000) * sampleRate);
-    const calibStartSample = chirpEndSample;
-    const calibStartIdx = Math.floor(calibStartSample / symbolSamples);
+    const calibStartSample = chirpDetected ? chirpEndSample : 0;
 
     // Try both modes
     const modes: { mode: AudioMode; calib: number[]; sync: number[]; calibRepeats: number; maxTone: number }[] = [
@@ -131,6 +141,7 @@ export async function analyzeCommand(
     let calibErrors = 0;
     let totalCalibSymbols = 0;
     let syncEndIdx = 0;
+    let bestCalibStartOffset = 0;
 
     for (const { mode, calib, sync, calibRepeats, maxTone } of modes) {
       const fullCalib: number[] = [];
@@ -139,9 +150,10 @@ export async function analyzeCommand(
       }
       const fullPattern = [...fullCalib, ...sync];
 
-      // Search in a small window around expected position
-      for (let off = -3; off <= 3; off++) {
-        const startIdx = off;
+      // Search for pattern: narrow window if chirp detected, full scan otherwise
+      const searchStart = chirpDetected ? -3 : 0;
+      const searchEnd = chirpDetected ? 3 : hardSymbols.length - fullPattern.length;
+      for (let startIdx = searchStart; startIdx <= searchEnd; startIdx++) {
         if (startIdx < 0 || startIdx + fullPattern.length > hardSymbols.length) continue;
 
         let matchCount = 0;
@@ -161,19 +173,114 @@ export async function analyzeCommand(
             calibErrors = fullPattern.length - matchCount;
             totalCalibSymbols = fullPattern.length;
             syncEndIdx = startIdx + fullPattern.length;
+            bestCalibStartOffset = startIdx;
           }
         }
       }
     }
 
-    // Step 4: Compute metrics on post-sync symbols (actual data)
+    // Bail out if no pattern found at all
+    if (!detectedMode) {
+      const result: AnalyzeResult = {
+        file: filePath,
+        duration,
+        sampleRate,
+        chirpDetected,
+        detectedMode: null,
+        signalQuality: 0,
+        averageConfidence: 0,
+        estimatedSymbolErrorRate: 1.0,
+        peakEnergy: computePeakEnergy(samples),
+        recommendation: 'No calibration/sync pattern detected. The file may not contain a Nedagram signal, or the signal is too distorted.',
+      };
+      outputResult(result, options, log);
+      return;
+    }
+
+    log(`Detected ${detectedMode} mode (pattern match: ${(bestMatchRatio * 100).toFixed(0)}%)`);
+
+    // Step 4: Frequency offset estimation from calibration tones
+    let freqOffsetResult: FrequencyOffsetResult | undefined;
+
+    if (detectedMode) {
+      // Set the detected mode so TONE_FREQUENCIES is correct
+      setAudioMode(detectedMode);
+
+      const modeConfig = detectedMode === 'phone' ? PHONE_MODE : WIDEBAND_MODE;
+      const calibRepeats = modeConfig.CALIBRATION_REPEATS;
+      const calibTones = modeConfig.CALIBRATION_TONES;
+      const calibSymbolCount = calibTones.length * calibRepeats;
+      const calibSampleLength = calibSymbolCount * symbolSamples;
+
+      // Extract calibration audio from the right position
+      const calibAudioStart = calibStartSample + bestCalibStartOffset * symbolSamples;
+      if (calibAudioStart + calibSampleLength <= samples.length) {
+        const calibAudio = samples.slice(calibAudioStart, calibAudioStart + calibSampleLength);
+
+        // Build expected tone sequence
+        const expectedTones: number[] = [];
+        for (let r = 0; r < calibRepeats; r++) {
+          expectedTones.push(...calibTones);
+        }
+
+        // Use wide search window for phone codecs
+        const tracker = new FrequencyOffsetTracker(200);
+        freqOffsetResult = tracker.estimateOffset(calibAudio, sampleRate, expectedTones, symbolSamples);
+      }
+    }
+
+    // Step 5: Per-symbol spectral dump for header region
+    let headerSymbolDump: SymbolDump[] | undefined;
+    let symbolsFlipped = 0;
+    let totalHeaderSymbols = 0;
+
+    if (detectedMode && syncEndIdx > 0 && freqOffsetResult) {
+      // Set mode for correct TONE_FREQUENCIES
+      setAudioMode(detectedMode);
+
+      // Extract ~30 header symbols (more than needed for analysis)
+      const numHeaderDumpSymbols = Math.min(30, softResults.length - syncEndIdx);
+      totalHeaderSymbols = numHeaderDumpSymbols;
+      headerSymbolDump = [];
+
+      for (let i = 0; i < numHeaderDumpSymbols; i++) {
+        const symbolIdx = syncEndIdx + i;
+        if (symbolIdx >= softResults.length) break;
+
+        const original = softResults[symbolIdx];
+
+        // Re-detect with frequency offset compensation
+        const symbolStart = calibStartSample + symbolIdx * symbolSamples;
+        const symbolChunk = samples.slice(symbolStart, symbolStart + symbolSamples);
+        let compensatedDecision: number | undefined;
+
+        if (symbolChunk.length >= symbolSamples * 0.8 && Math.abs(freqOffsetResult.offsetHz) >= 5) {
+          const compensated = detectToneSoft(symbolChunk, sampleRate, freqOffsetResult.offsetHz);
+          compensatedDecision = compensated.hardDecision;
+          if (compensatedDecision !== original.hardDecision) {
+            symbolsFlipped++;
+          }
+        }
+
+        headerSymbolDump.push({
+          symbolIndex: i,
+          hardDecision: original.hardDecision,
+          confidence: original.confidence,
+          softValues: Array.from(original.softValues),
+          peakFrequencies: original.peakFrequencies ?? [],
+          compensatedDecision,
+        });
+      }
+    }
+
+    // Step 6: Compute metrics on post-sync symbols (actual data)
     const dataSymbols = syncEndIdx > 0 ? softResults.slice(syncEndIdx) : softResults;
     const quality = measureSignalQuality(dataSymbols);
     const avgConf = averageConfidence(dataSymbols);
     const symbolErrorRate = totalCalibSymbols > 0 ? calibErrors / totalCalibSymbols : 1.0;
     const peakEnergy = computePeakEnergy(samples);
 
-    // Step 5: Recommendation
+    // Step 7: Recommendation
     let recommendation: string;
     if (quality >= 0.7 && avgConf >= 0.6) {
       recommendation = 'Signal quality is good. Standard decode should work.';
@@ -196,6 +303,14 @@ export async function analyzeCommand(
       estimatedSymbolErrorRate: symbolErrorRate,
       peakEnergy,
       recommendation,
+      frequencyOffset: freqOffsetResult ? {
+        offsetHz: freqOffsetResult.offsetHz,
+        confidence: freqOffsetResult.confidence,
+        measurements: freqOffsetResult.measurements,
+      } : undefined,
+      headerSymbolDump,
+      symbolsFlipped,
+      totalHeaderSymbols,
     };
 
     outputResult(result, options, log);
@@ -236,6 +351,53 @@ function outputResult(result: AnalyzeResult, options: AnalyzeOptions, log: (...a
   log(`  Symbol Error Rate: ${(result.estimatedSymbolErrorRate * 100).toFixed(1)}%`);
   log(`  Peak Energy:       ${result.peakEnergy.toFixed(3)}`);
   log('════════════════════════════════════════');
+
+  // Frequency offset section
+  if (result.frequencyOffset) {
+    log('');
+    log('Frequency Offset Analysis');
+    log('════════════════════════════════════════');
+    const offset = result.frequencyOffset;
+    log(`  Estimated offset:  ${offset.offsetHz >= 0 ? '+' : ''}${offset.offsetHz.toFixed(1)} Hz (confidence: ${(offset.confidence * 100).toFixed(0)}%)`);
+    for (const m of offset.measurements) {
+      const sign = m.errorHz >= 0 ? '+' : '';
+      log(`  Tone ${m.expectedHz} Hz:  measured ${m.measuredHz.toFixed(0)} Hz  (${sign}${m.errorHz.toFixed(0)} Hz)  mag: ${m.magnitude.toFixed(2)}`);
+    }
+    log('════════════════════════════════════════');
+  }
+
+  // Header symbol dump
+  if (result.headerSymbolDump && result.headerSymbolDump.length > 0) {
+    log('');
+    log('Header Symbols');
+    log('════════════════════════════════════════');
+
+    const hasCompensated = result.headerSymbolDump.some(s => s.compensatedDecision !== undefined);
+
+    for (const sym of result.headerSymbolDump) {
+      const softStr = `[${sym.softValues.join(',')}]`;
+      const peakStr = sym.peakFrequencies.length > 0
+        ? ` peaks=[${sym.peakFrequencies.map(f => f.toFixed(0)).join(',')}]Hz`
+        : '';
+      let line = `  #${String(sym.symbolIndex).padStart(2)}: tone=${sym.hardDecision} conf=${sym.confidence.toFixed(2)} soft=${softStr}${peakStr}`;
+
+      if (hasCompensated && sym.compensatedDecision !== undefined) {
+        const changed = sym.compensatedDecision !== sym.hardDecision;
+        line += changed
+          ? ` -> compensated=${sym.compensatedDecision} ***`
+          : ` -> compensated=${sym.compensatedDecision}`;
+      }
+      log(line);
+    }
+
+    if (hasCompensated && result.symbolsFlipped !== undefined && result.totalHeaderSymbols !== undefined) {
+      log('');
+      log(`  Symbols changed by offset compensation: ${result.symbolsFlipped}/${result.totalHeaderSymbols}`);
+    }
+
+    log('════════════════════════════════════════');
+  }
+
   log('');
   log(`  ${result.recommendation}`);
   log('');

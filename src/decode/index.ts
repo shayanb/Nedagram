@@ -18,6 +18,7 @@ import { processPayload, type ProcessResult } from './decompress';
 import { deinterleave, deinterleaveSoftBits, calculateInterleaverDepth } from '../encode/interleave';
 import { sha256Hex } from '../lib/sha256';
 import { ChirpDetector } from '../lib/chirp';
+import { FrequencyOffsetTracker } from './freq-offset';
 
 export type DecodeState =
   | 'idle'
@@ -133,6 +134,10 @@ export class Decoder {
   // Salvage mode (relaxed thresholds, partial recovery)
   private salvageMode = false;
 
+  // Frequency offset compensation (phone codec shifts)
+  private freqOffsetTracker: FrequencyOffsetTracker;
+  private estimatedFreqOffset: number = 0;
+
   // Performance throttling
   private patternSearchCounter = 0;
   private static readonly PATTERN_SEARCH_INTERVAL = 3; // Only search patterns every N audio chunks
@@ -164,6 +169,9 @@ export class Decoder {
 
     // Initialize chirp detector for robust preamble detection
     this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
+
+    // Frequency offset tracker (phone codecs can shift tones by 50-100+ Hz)
+    this.freqOffsetTracker = new FrequencyOffsetTracker(200);
 
     // Initialize phase arrays (hard + soft)
     for (let p = 0; p < NUM_PHASES; p++) {
@@ -283,6 +291,8 @@ export class Decoder {
     this.headerDecodedTime = 0;
     this.expectedEndTime = 0;
     this.lastHighEnergyTime = 0;
+    this.estimatedFreqOffset = 0;
+    this.freqOffsetTracker.reset();
 
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
@@ -449,7 +459,7 @@ export class Decoder {
 
         // Use soft-decision detection: provides both hard decision for pattern
         // matching and soft confidence values for Viterbi FEC decoding (~2-3 dB gain)
-        const softResult = detectToneSoft(symbolSamples, this.sampleRate);
+        const softResult = detectToneSoft(symbolSamples, this.sampleRate, this.estimatedFreqOffset);
         const confidenceThreshold = this.salvageMode ? 0.02 : 0.10;
 
         // Store hard decision for pattern matching (findBestPhase, etc.)
@@ -816,6 +826,195 @@ export class Decoder {
   }
 
   /**
+   * Estimate frequency offset from calibration tones using the chirp end position.
+   * Calibration tones have known values, so we can measure how much the phone codec
+   * has shifted the frequencies and compensate during symbol detection.
+   */
+  private estimateFreqOffsetFromCalibration(): void {
+    if (this.chirpEndSample <= 0) return;
+
+    const calibrationRepeats = AUDIO.CALIBRATION_REPEATS || 2;
+    const calibTones = AUDIO.CALIBRATION_TONES;
+    const calibSymbolCount = calibTones.length * calibrationRepeats;
+    const calibSampleCount = calibSymbolCount * this.symbolSamples;
+
+    if (this.chirpEndSample + calibSampleCount > this.totalSamplesReceived) return;
+
+    const calibSamples = this.getBufferSamples(this.chirpEndSample, calibSampleCount);
+
+    // Build expected tone sequence: [0,1,2,3, 0,1,2,3] for phone
+    const expectedTones: number[] = [];
+    for (let r = 0; r < calibrationRepeats; r++) {
+      expectedTones.push(...calibTones);
+    }
+
+    const result = this.freqOffsetTracker.estimateOffset(
+      calibSamples, this.sampleRate, expectedTones, this.symbolSamples
+    );
+
+    this.estimatedFreqOffset = result.offsetHz;
+    console.log(`[Decoder] Frequency offset: ${result.offsetHz.toFixed(1)} Hz (confidence: ${(result.confidence * 100).toFixed(0)}%)`);
+    if (result.measurements.length > 0) {
+      for (const m of result.measurements) {
+        console.log(`[Decoder]   Tone ${m.expectedHz}Hz -> measured ${m.measuredHz.toFixed(0)}Hz (${m.errorHz >= 0 ? '+' : ''}${m.errorHz.toFixed(0)}Hz)`);
+      }
+    }
+
+    // If significant offset detected, re-extract symbols from sync position onward
+    this.reextractWithOffset();
+  }
+
+  /**
+   * Re-extract symbols from sync position onward with the estimated frequency offset.
+   * Called after frequency offset is estimated from calibration tones.
+   */
+  private reextractWithOffset(): void {
+    if (Math.abs(this.estimatedFreqOffset) < 5) return; // No significant offset
+
+    console.log(`[Decoder] Re-extracting symbols with offset ${this.estimatedFreqOffset.toFixed(1)} Hz`);
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (this.phaseSymbols[p].length > this.syncFoundAt) {
+        this.phaseSymbols[p] = this.phaseSymbols[p].slice(0, this.syncFoundAt);
+        this.phaseSoftSymbols[p] = this.phaseSoftSymbols[p].slice(0, this.syncFoundAt);
+      }
+    }
+    // Re-extraction happens naturally in the next extractSymbolsAllPhases() call
+    // since phaseSymbols.length < symbolsExpected, using the now-set estimatedFreqOffset
+  }
+
+  /**
+   * Frequency sweep header decode: try different frequency offsets to recover
+   * the header. Used in salvage mode when standard decoding fails.
+   * Sweeps -100 to +100 Hz in 10 Hz steps, re-extracting symbols from raw audio
+   * at each offset and attempting FEC decode.
+   */
+  private frequencySweepHeaderDecode(headerBytes: number, headerSymbols: number): boolean {
+    if (this.bestPhase < 0 || this.syncFoundAt < 0) return false;
+
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+    const sweepOffsets: number[] = [];
+    for (let freqOff = -100; freqOff <= 100; freqOff += 10) {
+      // Skip offsets close to what we've already tried
+      if (Math.abs(freqOff - this.estimatedFreqOffset) < 8) continue;
+      sweepOffsets.push(freqOff);
+    }
+
+    console.log(`[Decoder] Salvage: frequency sweep (${sweepOffsets.length} offsets, -100 to +100 Hz)`);
+
+    for (const freqOff of sweepOffsets) {
+      // Try best phase first, then others
+      const phasesToTry = [this.bestPhase];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        if (p !== this.bestPhase) phasesToTry.push(p);
+      }
+
+      for (const phase of phasesToTry) {
+        // Extract header symbols with this frequency offset
+        const softResults = this.extractSymbolsWithOffset(
+          phase, this.syncFoundAt, headerSymbols, freqOff
+        );
+        if (softResults.length < headerSymbols) continue;
+
+        const softBits = softSymbolsToSoftBits(softResults, AUDIO.BITS_PER_SYMBOL)
+          .slice(0, headerBytes * 8);
+        const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, headerBytes);
+
+        // Try soft FEC decode
+        const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+        if (softResult.success) {
+          const header = parseHeaderFrame(softResult.data);
+          if (header && header.crcValid) {
+            console.log(`[Decoder] Salvage: header recovered at freq offset ${freqOff} Hz, phase ${phase}`);
+            this.headerInfo = header;
+            this.headerRepeated = header.totalFrames > 1;
+            this.frameCollector.setHeader(header);
+            this.totalErrorsFixed += Math.max(0, softResult.correctedErrors);
+            this.consecutiveHeaderFailures = 0;
+
+            // Adopt this frequency offset for all future symbol extraction
+            this.estimatedFreqOffset = freqOff;
+            this.reextractWithOffset();
+
+            if (phase !== this.bestPhase) {
+              this.bestPhase = phase;
+            }
+
+            this.headerDecodedTime = Date.now();
+            this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+            this.state = 'receiving_data';
+            this.lastDebugInfo = `Header recovered (freq sweep ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+            return true;
+          }
+        }
+
+        // Also try with redundancy combining (second header copy)
+        const symbols2Start = this.syncFoundAt + headerSymbols;
+        const softResults2 = this.extractSymbolsWithOffset(
+          phase, symbols2Start, headerSymbols, freqOff
+        );
+        if (softResults2.length >= headerSymbols) {
+          const softBits2 = softSymbolsToSoftBits(softResults2, AUDIO.BITS_PER_SYMBOL)
+            .slice(0, headerBytes * 8);
+          const deinterleavedSoft2 = deinterleaveSoftBits(softBits2, interleaverDepth, headerBytes);
+          const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+          if (redundantResult.success) {
+            const header = parseHeaderFrame(redundantResult.data);
+            if (header && header.crcValid) {
+              console.log(`[Decoder] Salvage: header recovered (redundant) at freq offset ${freqOff} Hz`);
+              this.headerInfo = header;
+              this.headerRepeated = header.totalFrames > 1;
+              this.frameCollector.setHeader(header);
+              this.totalErrorsFixed += Math.max(0, redundantResult.correctedErrors);
+              this.consecutiveHeaderFailures = 0;
+
+              this.estimatedFreqOffset = freqOff;
+              this.reextractWithOffset();
+
+              if (phase !== this.bestPhase) {
+                this.bestPhase = phase;
+              }
+
+              this.headerDecodedTime = Date.now();
+              this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+              this.state = 'receiving_data';
+              this.lastDebugInfo = `Header recovered (freq sweep ${freqOff >= 0 ? '+' : ''}${freqOff} Hz, redundant)`;
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    console.log('[Decoder] Salvage: frequency sweep failed');
+    return false;
+  }
+
+  /**
+   * Extract symbols from raw audio at a specific frequency offset.
+   * Used by salvage mode frequency sweep to try different offsets without
+   * modifying the main symbol arrays.
+   */
+  private extractSymbolsWithOffset(
+    phase: number, startIdx: number, count: number, freqOffset: number
+  ): SoftDetectionResult[] {
+    const results: SoftDetectionResult[] = [];
+    const offset = phase * this.phaseOffset;
+
+    for (let i = 0; i < count; i++) {
+      const symbolStart = offset + (startIdx + i) * this.symbolSamples;
+      const analysisStart = symbolStart + this.guardSamples;
+      const analysisLength = this.symbolSamples - this.guardSamples * 2;
+
+      if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+      const samples = this.getBufferSamples(analysisStart, analysisLength);
+      results.push(detectToneSoft(samples, this.sampleRate, freqOffset));
+    }
+
+    return results;
+  }
+
+  /**
    * Pattern matching for specific mode
    */
   private matchesPatternForMode(symbols: number[], startIndex: number, pattern: number[], maxTone: number): boolean {
@@ -1039,9 +1238,17 @@ export class Decoder {
 
     console.log('[Decoder] Got enough symbols for header...');
 
+    // Estimate frequency offset from calibration tones (only on first attempt)
+    if (this.consecutiveHeaderFailures === 0 && this.estimatedFreqOffset === 0) {
+      this.estimateFreqOffsetFromCalibration();
+    }
+
     // Try header extraction with offset retries
     // First try the detected position, then ±1, ±2 symbol offsets
-    const offsets = [0, -1, 1, -2, 2];
+    // In salvage mode, try wider range ±5
+    const offsets = this.salvageMode
+      ? [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5]
+      : [0, -1, 1, -2, 2];
 
     // Also try different phases if the primary phase fails
     const phasesToTry = [this.bestPhase];
@@ -1188,6 +1395,14 @@ export class Decoder {
     }
 
     console.log('[Decoder] Header FEC decode failed after trying', offsets.length * phasesToTry.length, 'combinations');
+
+    // Salvage mode: frequency sweep - try different frequency offsets
+    if (this.salvageMode) {
+      const sweepResult = this.frequencySweepHeaderDecode(headerBytes, headerSymbols);
+      if (sweepResult) {
+        return; // Success via frequency sweep
+      }
+    }
 
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;

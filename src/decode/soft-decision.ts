@@ -11,7 +11,7 @@
  * - 255 = very likely
  */
 
-import { fft, magnitude } from '../lib/fft';
+import { fft, magnitude, findPeakFrequency } from '../lib/fft';
 import { AUDIO, TONE_FREQUENCIES } from '../utils/constants';
 
 /**
@@ -32,6 +32,8 @@ export interface SoftDetectionResult {
   confidence: number;
   /** Raw magnitudes for debugging */
   magnitudes?: number[];
+  /** Peak frequency measured in each tone's band (Hz) */
+  peakFrequencies?: number[];
 }
 
 /**
@@ -95,6 +97,14 @@ export function detectToneSoft(
     toneMagnitudes[t] = toneMag * 0.3 + peakMag * 0.7;
   }
 
+  // Measure peak frequency in each tone's band
+  const peakFrequencies: number[] = new Array(numTones);
+  for (let t = 0; t < numTones; t++) {
+    const freq = TONE_FREQUENCIES[t] + frequencyOffset;
+    const peak = findPeakFrequency(mags, sampleRate, freq - halfSpacing, freq + halfSpacing);
+    peakFrequencies[t] = peak.frequency;
+  }
+
   // Find min and max for normalization
   let minMag = Infinity;
   let maxMag = -Infinity;
@@ -134,6 +144,7 @@ export function detectToneSoft(
     hardDecision,
     confidence,
     magnitudes: Array.from(toneMagnitudes),
+    peakFrequencies,
   };
 }
 
