@@ -107,6 +107,33 @@
   margin: var(--space-xs) 0 0 0;
 }
 
+.last-recording {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.last-recording-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.last-recording-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.last-recording-time {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
 .receive-page.dragging {
   position: relative;
 }

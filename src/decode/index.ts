@@ -138,6 +138,9 @@ export class Decoder {
   private freqOffsetTracker: FrequencyOffsetTracker;
   private estimatedFreqOffset: number = 0;
 
+  // Spectral interference compensation (constant background tones)
+  private toneBiases: Float32Array | null = null;
+
   // Performance throttling
   private patternSearchCounter = 0;
   private static readonly PATTERN_SEARCH_INTERVAL = 3; // Only search patterns every N audio chunks
@@ -206,6 +209,16 @@ export class Decoder {
    */
   setSalvageMode(enabled: boolean): void {
     this.salvageMode = enabled;
+  }
+
+  /**
+   * Get effective guard samples for symbol analysis.
+   * In salvage mode, skip guard trimming entirely to maximize FFT window size.
+   * Normal: 2400 - 2*576 = 1248 samples (52%), 38.5 Hz/bin resolution
+   * Salvage: 2400 samples (100%), 20 Hz/bin resolution — matches analyzer behavior
+   */
+  private getEffectiveGuardSamples(): number {
+    return this.salvageMode ? 0 : this.guardSamples;
   }
 
   /**
@@ -293,6 +306,7 @@ export class Decoder {
     this.lastHighEnergyTime = 0;
     this.estimatedFreqOffset = 0;
     this.freqOffsetTracker.reset();
+    this.toneBiases = null;
 
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
@@ -382,27 +396,39 @@ export class Decoder {
     }
 
     // Extract symbols for all phases
-    this.extractSymbolsAllPhases();
+    try {
+      this.extractSymbolsAllPhases();
+    } catch (err) {
+      console.error('[Decoder] extractSymbolsAllPhases error:', err);
+      this.lastDebugInfo = `Error: extractSymbols - ${err instanceof Error ? err.message : err}`;
+      this.updateProgress();
+      return;
+    }
 
     // Process based on state
-    if (this.bestPhase < 0) {
-      // Throttle pattern search to reduce CPU load during preamble detection
-      this.patternSearchCounter++;
-      if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
-        this.patternSearchCounter = 0;
-        // If chirp is detected, use precise timing first
-        if (this.chirpDetected && this.chirpEndSample > 0) {
-          this.findBestPhaseFromChirp();
+    try {
+      if (this.bestPhase < 0) {
+        // Throttle pattern search to reduce CPU load during preamble detection
+        this.patternSearchCounter++;
+        if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
+          this.patternSearchCounter = 0;
+          // If chirp is detected, use precise timing first
+          if (this.chirpDetected && this.chirpEndSample > 0) {
+            this.findBestPhaseFromChirp();
+          }
+          // If chirp-based search didn't find sync (or no chirp), use exhaustive search
+          if (this.bestPhase < 0) {
+            this.findBestPhase();
+          }
         }
-        // If chirp-based search didn't find sync (or no chirp), use exhaustive search
-        if (this.bestPhase < 0) {
-          this.findBestPhase();
-        }
+      } else if (this.state === 'receiving_header') {
+        this.processHeader();
+      } else if (this.state === 'receiving_data') {
+        this.processDataFrame();
       }
-    } else if (this.state === 'receiving_header') {
-      this.processHeader();
-    } else if (this.state === 'receiving_data') {
-      this.processDataFrame();
+    } catch (err) {
+      console.error('[Decoder] Processing error:', err);
+      this.lastDebugInfo = `Error: processing - ${err instanceof Error ? err.message : err}`;
     }
 
     this.updateProgress();
@@ -432,9 +458,10 @@ export class Decoder {
         const symbolIndex = this.phaseSymbols[phase].length;
         const symbolStart = offset + symbolIndex * this.symbolSamples;
 
-        // Get samples for this symbol (skip guard intervals)
-        const analysisStart = symbolStart + this.guardSamples;
-        const analysisLength = this.symbolSamples - this.guardSamples * 2;
+        // Get samples for this symbol (skip guard intervals; salvage mode uses full window)
+        const guard = this.getEffectiveGuardSamples();
+        const analysisStart = symbolStart + guard;
+        const analysisLength = this.symbolSamples - guard * 2;
 
         // Check if we have enough samples
         if (analysisStart + analysisLength > this.totalSamplesReceived) break;
@@ -461,7 +488,7 @@ export class Decoder {
 
         // Use soft-decision detection: provides both hard decision for pattern
         // matching and soft confidence values for Viterbi FEC decoding (~2-3 dB gain)
-        const softResult = detectToneSoft(symbolSamples, this.sampleRate, this.estimatedFreqOffset);
+        const softResult = detectToneSoft(symbolSamples, this.sampleRate, this.estimatedFreqOffset, this.toneBiases ?? undefined);
         const confidenceThreshold = this.salvageMode ? 0.02 : 0.10;
 
         // Store hard decision for pattern matching (findBestPhase, etc.)
@@ -689,7 +716,7 @@ export class Decoder {
           const syncPos = i + patternLen;
           if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          if (this.matchesPatternForMode(symbols, i, fullPattern, maxTone)) {
+          if (this.matchesPatternForMode(symbols, i, fullPattern, maxTone, this.salvageMode)) {
             this.bestPhase = phase;
             this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
@@ -720,7 +747,7 @@ export class Decoder {
           const syncPos = i + syncLen;
           if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          if (this.matchesSyncPatternForMode(symbols, i, maxTone, syncLen)) {
+          if (this.matchesSyncPatternForMode(symbols, i, maxTone, syncLen, this.salvageMode)) {
             if (symbols.length > syncPos + 12) {
               this.bestPhase = phase;
               this.syncFoundAt = syncPos;
@@ -743,37 +770,106 @@ export class Decoder {
     }
 
     // PASS 3: Try loose pattern (8 symbols with tolerance) - last resort
-    // Require extra buffer to ensure we've had time to detect any full pattern first
-    for (let phase = 0; phase < NUM_PHASES; phase++) {
-      const symbols = this.phaseSymbols[phase];
-      if (symbols.length < 20) continue;
+    // Skip in salvage mode: PASS 4's full 16-symbol best-match search is more reliable
+    // because the 8-symbol pattern has ambiguous alignment (calib[0] vs calib[4])
+    if (!this.salvageMode) {
+      for (let phase = 0; phase < NUM_PHASES; phase++) {
+        const symbols = this.phaseSymbols[phase];
+        if (symbols.length < 20) continue;
 
-      for (const { mode, maxTone } of modes) {
-        for (let i = 0; i <= symbols.length - 8; i++) {
-          const syncPos = i + 8;
-          if (this.isSyncPositionFailed(phase, syncPos)) continue;
+        for (const { mode, maxTone } of modes) {
+          for (let i = 0; i <= symbols.length - 8; i++) {
+            // The loose pattern [0,1,2,3,0,3,0,3] matches calib[4..7]+sync[0..3].
+            // After these 8 symbols, sync[4..7] (4 more symbols) remain before header.
+            const syncPos = i + 12;
+            if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          // Require enough symbols that a full pattern at i-4 would have been detectable
-          // Full pattern at (i-4) needs symbols up to (i-4+16) = (i+12)
-          // This prevents matching a loose pattern before its containing full pattern is visible
-          if (symbols.length < i + 16) continue;
+            // Require enough symbols that a full pattern at i-4 would have been detectable
+            // Full pattern at (i-4) needs symbols up to (i-4+16) = (i+12)
+            // This prevents matching a loose pattern before its containing full pattern is visible
+            if (symbols.length < i + 16) continue;
 
-          if (this.matchesLoosePatternForMode(symbols, i, maxTone)) {
-            this.bestPhase = phase;
-            this.syncFoundAt = syncPos;
-            this.state = 'receiving_header';
-            this.detectedAudioMode = mode;
-            this.syncDetectedTime = Date.now();
-            this.lastHighEnergyTime = Date.now();  // Reset silence timer
+            if (this.matchesLoosePatternForMode(symbols, i, maxTone, this.salvageMode)) {
+              this.bestPhase = phase;
+              this.syncFoundAt = syncPos;
+              this.state = 'receiving_header';
+              this.detectedAudioMode = mode;
+              this.syncDetectedTime = Date.now();
+              this.lastHighEnergyTime = Date.now();  // Reset silence timer
 
-            setAudioMode(mode);
-            this.updateSymbolTiming();
+              setAudioMode(mode);
+              this.updateSymbolTiming();
 
-            console.log(`[Decoder] Found ${mode} loose pattern at phase ${phase} index ${i} (${symbols.slice(i, i + 8).join(',')})`);
-            this.lastDebugInfo = `Sync found (${mode}, loose)!`;
-            return;
+              console.log(`[Decoder] Found ${mode} loose pattern at phase ${phase} index ${i} (${symbols.slice(i, i + 8).join(',')})`);
+              this.lastDebugInfo = `Sync found (${mode}, loose)!`;
+              return;
+            }
           }
         }
+      }
+    }
+
+    // PASS 4 (salvage only): Percentage-based pattern scan — like the analyzer
+    // Uses a lower threshold (60%) to find heavily distorted preambles
+    if (this.salvageMode) {
+      let bestMatch = { ratio: 0, phase: -1, syncPos: -1, mode: '' as AudioMode };
+
+      for (let phase = 0; phase < NUM_PHASES; phase++) {
+        const symbols = this.phaseSymbols[phase];
+        if (symbols.length < 20) continue;
+
+        for (const { mode, calib, sync, maxTone } of modes) {
+          const fullCalib: number[] = [];
+          for (let r = 0; r < calibRepeats; r++) {
+            fullCalib.push(...calib);
+          }
+          const fullPattern = [...fullCalib, ...sync];
+          const patternLen = fullPattern.length;
+          const tolerance = maxTone > 10 ? 2 : 1;
+
+          for (let i = 0; i <= symbols.length - patternLen; i++) {
+            const syncPos = i + patternLen;
+            if (this.isSyncPositionFailed(phase, syncPos)) continue;
+            if (symbols.length < syncPos + 12) continue; // Need some header symbols too
+
+            let matchCount = 0;
+            for (let j = 0; j < patternLen; j++) {
+              if (symbols[i + j] === fullPattern[j] ||
+                  Math.abs(symbols[i + j] - fullPattern[j]) <= tolerance) {
+                matchCount++;
+              }
+            }
+            const ratio = matchCount / patternLen;
+            if (ratio > bestMatch.ratio) {
+              bestMatch = { ratio, phase, syncPos, mode };
+            }
+          }
+        }
+      }
+
+      // Require enough symbols before accepting low-confidence matches.
+      // The preamble might be further into the audio, and with incremental feeding
+      // (100ms chunks), we might prematurely lock onto a false match before the real
+      // preamble has been fully extracted. Require 80 symbols (~4s) for matches <75%
+      // to ensure the full preamble region has been processed.
+      const minSymbolsForLowMatch = 80;
+      const maxPhaseSymbols = Math.max(...this.phaseSymbols.map(s => s.length));
+      const acceptThreshold = maxPhaseSymbols >= minSymbolsForLowMatch ? 0.60 : 0.80;
+
+      if (bestMatch.ratio >= acceptThreshold && bestMatch.phase >= 0) {
+        this.bestPhase = bestMatch.phase;
+        this.syncFoundAt = bestMatch.syncPos;
+        this.state = 'receiving_header';
+        this.detectedAudioMode = bestMatch.mode as AudioMode;
+        this.syncDetectedTime = Date.now();
+        this.lastHighEnergyTime = Date.now();
+
+        setAudioMode(bestMatch.mode as AudioMode);
+        this.updateSymbolTiming();
+
+        console.log(`[Decoder] Salvage: found ${bestMatch.mode} pattern at phase ${bestMatch.phase} syncPos ${bestMatch.syncPos} (${(bestMatch.ratio * 100).toFixed(0)}% match)`);
+        this.lastDebugInfo = `Sync found (${bestMatch.mode}, salvage ${(bestMatch.ratio * 100).toFixed(0)}%)!`;
+        return;
       }
     }
 
@@ -879,6 +975,133 @@ export class Decoder {
     }
     // Re-extraction happens naturally in the next extractSymbolsAllPhases() call
     // since phaseSymbols.length < symbolsExpected, using the now-set estimatedFreqOffset
+  }
+
+  /**
+   * Estimate per-tone interference levels from global audio analysis.
+   *
+   * Scans symbols across the entire audio and measures the MINIMUM magnitude
+   * of each tone. A constant interfering frequency (e.g., 1800 Hz from codec
+   * artifacts or speaker resonance) will have a high minimum because it never
+   * drops to zero, unlike legitimate signal tones which are only present when
+   * that specific tone is being transmitted.
+   *
+   * This approach is position-independent — it doesn't need the correct
+   * calibration position to detect interference.
+   *
+   * Returns true if significant interference was detected and biases were set.
+   */
+  private estimateToneBiases(): boolean {
+    const phase = this.bestPhase >= 0 ? this.bestPhase : 0;
+    const offset = phase * this.phaseOffset;
+    const numTones = AUDIO.NUM_TONES || 4;
+
+    // Sample symbols near the sync position (where we know there's signal)
+    // Use a window centered around syncFoundAt, extending backwards and forwards
+    const syncIdx = this.syncFoundAt >= 0 ? this.syncFoundAt : 0;
+    const totalSymbols = Math.floor((this.totalSamplesReceived - offset) / this.symbolSamples);
+    // Start from 20 symbols before sync (in the calibration/preamble region) to well into the data
+    const sampleStart = Math.max(0, syncIdx - 20);
+    const sampleEnd = Math.min(totalSymbols, syncIdx + 200);
+    const numAvailable = sampleEnd - sampleStart;
+    const numToSample = Math.min(50, numAvailable);
+    if (numToSample < 10) return false;
+
+    // For each tone, measure its average magnitude when it's NOT the hard decision
+    // (i.e., when another tone won). This isolates the interference baseline.
+    const step = Math.max(1, Math.floor(numAvailable / numToSample));
+    const noiseSums = new Float32Array(numTones);
+    const noiseCounts = new Float32Array(numTones);
+    let validCount = 0;
+
+    const biasGuard = this.getEffectiveGuardSamples();
+    for (let idx = sampleStart; idx < sampleEnd && validCount < numToSample; idx += step) {
+      const symbolStart = offset + idx * this.symbolSamples;
+      const analysisStart = symbolStart + biasGuard;
+      const analysisLength = this.symbolSamples - biasGuard * 2;
+
+      if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+      const samples = this.getBufferSamples(analysisStart, analysisLength);
+      const result = detectToneSoft(samples, this.sampleRate, this.estimatedFreqOffset);
+      if (!result.magnitudes) continue;
+
+      // Skip very low energy symbols (silence/noise)
+      const maxMag = Math.max(...result.magnitudes);
+      if (maxMag < 3) continue;
+
+      const winner = result.hardDecision;
+      for (let t = 0; t < numTones; t++) {
+        if (t !== winner) {
+          noiseSums[t] += result.magnitudes[t];
+          noiseCounts[t] += 1;
+        }
+      }
+      validCount++;
+    }
+
+    if (validCount < 5) {
+      console.log(`[Decoder] Tone bias: insufficient samples (${validCount})`);
+      return false;
+    }
+
+    // Compute average "background" magnitude per tone
+    const avgNoise = new Float32Array(numTones);
+    for (let t = 0; t < numTones; t++) {
+      avgNoise[t] = noiseCounts[t] > 0 ? noiseSums[t] / noiseCounts[t] : 0;
+    }
+
+    // Find tone with highest average noise (constant interference)
+    let maxNoise = 0;
+    let maxIdx = -1;
+    for (let t = 0; t < numTones; t++) {
+      if (avgNoise[t] > maxNoise) {
+        maxNoise = avgNoise[t];
+        maxIdx = t;
+      }
+    }
+
+    // Compare against other tones' average noise
+    let otherSum = 0;
+    let otherCount = 0;
+    for (let t = 0; t < numTones; t++) {
+      if (t !== maxIdx) {
+        otherSum += avgNoise[t];
+        otherCount++;
+      }
+    }
+    const otherAvg = otherCount > 0 ? otherSum / otherCount : 0;
+
+    if (maxNoise < otherAvg * 1.3 || maxNoise < 3) {
+      return false;
+    }
+
+    // Use full average noise as bias for spectral whitening (division-based)
+    const biases = new Float32Array(numTones);
+    for (let t = 0; t < numTones; t++) {
+      biases[t] = avgNoise[t];
+    }
+
+    this.toneBiases = biases;
+    console.log(`[Decoder] Spectral interference: tone ${maxIdx} noise ${maxNoise.toFixed(1)} (${(maxNoise/otherAvg).toFixed(1)}x others)`);
+
+    return true;
+  }
+
+  /**
+   * Re-extract symbols with tone bias compensation.
+   * Clears symbols from sync position onward so they get re-extracted with biases.
+   */
+  private reextractWithBiases(): void {
+    if (!this.toneBiases) return;
+
+    console.log('[Decoder] Re-extracting symbols with interference compensation');
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (this.phaseSymbols[p].length > this.syncFoundAt) {
+        this.phaseSymbols[p] = this.phaseSymbols[p].slice(0, this.syncFoundAt);
+        this.phaseSoftSymbols[p] = this.phaseSoftSymbols[p].slice(0, this.syncFoundAt);
+      }
+    }
   }
 
   /**
@@ -1116,6 +1339,13 @@ export class Decoder {
     const dataSymbolsAvailable = symbolsAvailable - (this.syncFoundAt >= 0 ? this.syncFoundAt : 0) - headerSymbolCount;
     if (dataSymbolsAvailable < 10) return false; // Not enough data symbols
 
+    // Check that data frames actually fit in available audio
+    // Each data frame needs: (3 + PAYLOAD_SIZE + RS_PARITY_SIZE) bytes worth of symbols
+    const dataFrameBytes = getDataFrameSize(FRAME_V3.PAYLOAD_SIZE);
+    const symbolsPerFrame = this.calculateSymbolsForBytes(dataFrameBytes);
+    const totalDataSymbolsNeeded = header.totalFrames * symbolsPerFrame;
+    if (totalDataSymbolsNeeded > dataSymbolsAvailable * 1.5) return false; // Allow 50% slack for timing drift
+
     return true;
   }
 
@@ -1143,15 +1373,16 @@ export class Decoder {
     const results: SoftDetectionResult[] = [];
     const offset = phase * this.phaseOffset;
 
+    const offsetGuard = this.getEffectiveGuardSamples();
     for (let i = 0; i < count; i++) {
       const symbolStart = offset + (startIdx + i) * this.symbolSamples;
-      const analysisStart = symbolStart + this.guardSamples;
-      const analysisLength = this.symbolSamples - this.guardSamples * 2;
+      const analysisStart = symbolStart + offsetGuard;
+      const analysisLength = this.symbolSamples - offsetGuard * 2;
 
       if (analysisStart + analysisLength > this.totalSamplesReceived) break;
 
       const samples = this.getBufferSamples(analysisStart, analysisLength);
-      results.push(detectToneSoft(samples, this.sampleRate, freqOffset));
+      results.push(detectToneSoft(samples, this.sampleRate, freqOffset, this.toneBiases ?? undefined));
     }
 
     return results;
@@ -1160,7 +1391,7 @@ export class Decoder {
   /**
    * Pattern matching for specific mode
    */
-  private matchesPatternForMode(symbols: number[], startIndex: number, pattern: number[], maxTone: number): boolean {
+  private matchesPatternForMode(symbols: number[], startIndex: number, pattern: number[], maxTone: number, salvage = false): boolean {
     let matches = 0;
     const tolerance = maxTone > 10 ? 2 : 1; // Larger tolerance for wideband (16 tones)
 
@@ -1171,7 +1402,9 @@ export class Decoder {
         matches += 0.5; // Partial match for adjacent tones
       }
     }
-    return matches >= pattern.length - 1; // Allow 1 mismatch
+    // Normal: allow 1 mismatch (94%). Salvage: allow ~25% mismatch (75%)
+    const threshold = salvage ? pattern.length * 0.75 : pattern.length - 1;
+    return matches >= threshold;
   }
 
   /**
@@ -1179,10 +1412,13 @@ export class Decoder {
    * Sync: [low, high, low, high, ...] alternating pattern
    * Made stricter to avoid false positives
    */
-  private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8): boolean {
+  private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8, salvage = false): boolean {
     // Phone mode (4 tones): require exact 8/8 match - less margin for error
     // Wideband mode (16 tones): allow 7/8 - more tones means more potential drift
-    const minMatch = maxTone > 10 ? syncLen - 1 : syncLen;
+    // Salvage mode: allow 6/8 for phone, 5/8 for wideband
+    const minMatch = salvage
+      ? (maxTone > 10 ? syncLen - 3 : syncLen - 2)
+      : (maxTone > 10 ? syncLen - 1 : syncLen);
 
     let matches = 0;
     for (let i = 0; i < Math.min(syncLen, symbols.length - startIndex); i++) {
@@ -1206,7 +1442,7 @@ export class Decoder {
    * Works for both phone (8 tones) and wideband (16 tones)
    * Phone mode is stricter since we have fewer tones
    */
-  private matchesLoosePatternForMode(symbols: number[], startIndex: number, maxTone: number): boolean {
+  private matchesLoosePatternForMode(symbols: number[], startIndex: number, maxTone: number, salvage = false): boolean {
     const s = symbols.slice(startIndex, startIndex + 8);
     if (s.length < 8) return false;
 
@@ -1215,6 +1451,15 @@ export class Decoder {
     const isPhoneMode = maxTone <= 7;
 
     if (isPhoneMode) {
+      if (salvage) {
+        // Salvage: count matches with ±1 tolerance, require 6/8
+        let matches = 0;
+        const expected = [0, 1, 2, 3, 0, maxTone, 0, maxTone];
+        for (let i = 0; i < 8; i++) {
+          if (s[i] === expected[i] || Math.abs(s[i] - expected[i]) <= 1) matches++;
+        }
+        return matches >= 6;
+      }
       // Phone mode: exact calibration match required
       const calibOk = s[0] === 0 && s[1] === 1 && s[2] === 2 && s[3] === 3;
       // Phone mode: exact sync match required (alternating 0 and maxTone)
@@ -1226,7 +1471,7 @@ export class Decoder {
     // Wideband mode: allow tolerance
     const quarter = Math.floor(maxTone / 4);
     const threeQuarter = Math.floor((maxTone * 3) / 4);
-    const tolerance = 2;
+    const tolerance = salvage ? 3 : 2;
 
     // Check calibration part (first 4 symbols should be: low, ~quarter, ~3/4, high)
     const calibOk = s[0] <= tolerance &&
@@ -1550,6 +1795,98 @@ export class Decoder {
       const bruteResult = this.bruteForceHeaderRecovery(headerBytes, headerSymbols);
       if (bruteResult) {
         return; // Success via brute-force
+      }
+    }
+
+    // Try spectral interference compensation on first overall failure
+    if (!this.toneBiases) {
+      const biasDetected = this.estimateToneBiases();
+      if (biasDetected) {
+        console.log('[Decoder] Retrying header with interference compensation at same sync position...');
+
+        // Re-extract header symbols at current sync position WITH biases applied
+        const headerSymbols2 = this.calculateSymbolsForBytes(headerBytes);
+        const interleaverDepth2 = calculateInterleaverDepth(headerBytes);
+
+        // Try with biases at current position + frequency offsets
+        const biasOffsets = [this.estimatedFreqOffset, 0];
+        for (let off = -100; off <= 100; off += 10) {
+          if (!biasOffsets.includes(off)) biasOffsets.push(off);
+        }
+
+        for (const freqOff of biasOffsets) {
+          const softResults = this.extractSymbolsWithOffset(
+            this.bestPhase, this.syncFoundAt, headerSymbols2, freqOff
+          );
+          if (softResults.length < headerSymbols2) continue;
+
+          const softBits = softSymbolsToSoftBits(softResults, AUDIO.BITS_PER_SYMBOL)
+            .slice(0, headerBytes * 8);
+          const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth2, headerBytes);
+
+          // Try soft FEC decode
+          const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+          if (softResult.success) {
+            const header = parseHeaderFrame(softResult.data);
+            if (header && header.crcValid && this.isPlausibleHeader(header)) {
+              console.log(`[Decoder] Header recovered with bias compensation at freq ${freqOff} Hz!`);
+              this.headerInfo = header;
+              this.headerRepeated = header.totalFrames > 1;
+              this.frameCollector.setHeader(header);
+              this.totalErrorsFixed += Math.max(0, softResult.correctedErrors);
+              this.consecutiveHeaderFailures = 0;
+              this.estimatedFreqOffset = freqOff;
+              this.reextractWithOffset();
+              this.headerDecodedTime = Date.now();
+              this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+              this.state = 'receiving_data';
+              this.lastDebugInfo = `Header recovered (bias + freq ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+              return;
+            }
+          }
+
+          // Also try redundancy combining with biases
+          const symbols2Start = this.syncFoundAt + headerSymbols2;
+          const softResults2 = this.extractSymbolsWithOffset(
+            this.bestPhase, symbols2Start, headerSymbols2, freqOff
+          );
+          if (softResults2.length >= headerSymbols2) {
+            const softBits2 = softSymbolsToSoftBits(softResults2, AUDIO.BITS_PER_SYMBOL)
+              .slice(0, headerBytes * 8);
+            const deinterleavedSoft2 = deinterleaveSoftBits(softBits2, interleaverDepth2, headerBytes);
+            const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+            if (redundantResult.success) {
+              const header = parseHeaderFrame(redundantResult.data);
+              if (header && header.crcValid && this.isPlausibleHeader(header)) {
+                console.log(`[Decoder] Header recovered with bias + redundancy at freq ${freqOff} Hz!`);
+                this.headerInfo = header;
+                this.headerRepeated = header.totalFrames > 1;
+                this.frameCollector.setHeader(header);
+                this.totalErrorsFixed += Math.max(0, redundantResult.correctedErrors);
+                this.consecutiveHeaderFailures = 0;
+                this.estimatedFreqOffset = freqOff;
+                this.reextractWithOffset();
+                this.headerDecodedTime = Date.now();
+                this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+                this.state = 'receiving_data';
+                this.lastDebugInfo = `Header recovered (bias + redundancy, freq ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+                return;
+              }
+            }
+          }
+        }
+
+        // Bias sweep didn't find header — also try brute-force with biases
+        console.log('[Decoder] Bias compensation frequency sweep failed, trying brute-force with biases...');
+        if (this.bruteForceHeaderRecovery(headerBytes, this.calculateSymbolsForBytes(headerBytes))) {
+          return;
+        }
+
+        // Bias-compensated decode at this position failed.
+        // Don't restart with biases — fall through to normal failure path which
+        // marks this position as failed and tries the next best without bias changes.
+        // This avoids changing symbol extraction which could hurt soft-decision FEC.
+        console.log('[Decoder] Bias compensation at this position failed, trying next position...');
       }
     }
 

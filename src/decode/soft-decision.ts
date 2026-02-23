@@ -59,12 +59,14 @@ function magnitudeToSoft(mag: number, maxMag: number, minMag: number): number {
  * @param samples - Audio samples for one symbol period
  * @param sampleRate - Audio sample rate
  * @param frequencyOffset - Optional frequency offset compensation (Hz)
+ * @param toneBiases - Optional per-tone baseline magnitudes to subtract (interference compensation)
  * @returns Soft detection result with confidence for each tone
  */
 export function detectToneSoft(
   samples: Float32Array,
   sampleRate: number,
-  frequencyOffset: number = 0
+  frequencyOffset: number = 0,
+  toneBiases?: Float32Array
 ): SoftDetectionResult {
   // Compute FFT and magnitudes
   const fftResult = fft(samples);
@@ -95,6 +97,16 @@ export function detectToneSoft(
 
     // Combine sum and peak for robust measurement
     toneMagnitudes[t] = toneMag * 0.3 + peakMag * 0.7;
+  }
+
+  // Apply interference compensation: divide by baseline magnitudes (spectral whitening)
+  // Division normalizes each tone by its noise floor, making comparisons fair even with
+  // strong narrowband interference (e.g., 1800 Hz constant tone from phone codecs).
+  // This is much more effective than subtraction when interference >> signal.
+  if (toneBiases) {
+    for (let t = 0; t < numTones; t++) {
+      toneMagnitudes[t] = toneBiases[t] > 1 ? toneMagnitudes[t] / toneBiases[t] : toneMagnitudes[t];
+    }
   }
 
   // Measure peak frequency in each tone's band

@@ -23,6 +23,7 @@ const debugInfo = signal('');
 const copied = signal(false);
 const chirpDetected = signal(false);
 const hasAudioRecording = signal(false);
+const lastRecordingTime = signal<Date | null>(null);
 const needsPassword = signal(false);
 const decryptPassword = signal('');
 const showDecryptPassword = signal(false);
@@ -95,7 +96,11 @@ export function Receive() {
     try {
       await startRecording({
         onSamples: (samples) => {
-          dec.processSamples(samples);
+          try {
+            dec.processSamples(samples);
+          } catch (err) {
+            console.error('[Decoder] processSamples error:', err);
+          }
           const progress = dec.progress.value;
           signalLevel.value = progress.signalLevel;
           receiveState.value = progress.state;
@@ -126,7 +131,8 @@ export function Receive() {
     decoder.value?.stop();
     receiveState.value = 'idle';
     debugInfo.value = '';
-    hasAudioRecording.value = true; // Keep recording available for save
+    hasAudioRecording.value = true;
+    lastRecordingTime.value = new Date();
   }, []);
 
   const handleCopy = useCallback(async () => {
@@ -164,6 +170,7 @@ export function Receive() {
     debugInfo.value = '';
     chirpDetected.value = false;
     hasAudioRecording.value = false;
+    lastRecordingTime.value = null;
     needsPassword.value = false;
     decryptPassword.value = '';
     showDecryptPassword.value = false;
@@ -197,7 +204,7 @@ export function Receive() {
   }, []);
 
   const handleFileUpload = useCallback(async (file: File) => {
-    if (!file) return;
+    if (!file || isProcessingFile.value) return;
 
     // Reset state
     errorMessage.value = null;
@@ -444,6 +451,23 @@ export function Receive() {
           </div>
         ) : null}
       </div>
+
+      {/* Last recording - shown in idle state when a previous recording exists */}
+      {!isListening && receiveState.value === 'idle' && hasAudioRecording.value && (
+        <div class="last-recording">
+          <div class="last-recording-info">
+            <span class="last-recording-label">Last recording</span>
+            {lastRecordingTime.value && (
+              <span class="last-recording-time">
+                {lastRecordingTime.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
+          <Button onClick={handleSaveAudio} variant="ghost">
+            {t.receive.saveAudio}
+          </Button>
+        </div>
+      )}
 
       {/* Drag overlay */}
       {isDragging.value && (
