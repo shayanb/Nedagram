@@ -88,7 +88,6 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
   if (magic === FRAME_V3.HEADER_MAGIC) {
     protocolVersion = 'v3';
   } else {
-    console.log('[Deframe] Invalid magic:', magic, 'expected', FRAME_V3.HEADER_MAGIC);
     return null;
   }
 
@@ -96,10 +95,6 @@ export function parseHeaderFrame(frame: Uint8Array): HeaderInfo | null {
   const storedCRC = readUint16LE(frame, 10);
   const calculatedCRC = crc16(frame.subarray(0, 10));
   const crcValid = storedCRC === calculatedCRC;
-
-  if (!crcValid) {
-    console.log('[Deframe] CRC16 mismatch: stored', storedCRC.toString(16), 'calculated', calculatedCRC.toString(16));
-  }
 
   // Version (high 4 bits) + Flags (low 4 bits)
   const versionFlags = frame[2];

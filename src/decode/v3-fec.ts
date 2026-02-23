@@ -60,8 +60,7 @@ export function decodeV3FEC(
   let viterbiOutput: Uint8Array;
   try {
     viterbiOutput = viterbiDecode(received, originalBitCount, V3_FEC_CONFIG.USE_PUNCTURING);
-  } catch (err) {
-    console.warn('[v3-FEC] Viterbi decode failed:', (err as Error).message);
+  } catch (_err) {
     return {
       data: new Uint8Array(0),
       correctedErrors: -1,
@@ -88,8 +87,7 @@ export function decodeV3FEC(
       rsSuccess: true,
       success: true,
     };
-  } catch (err) {
-    console.warn('[v3-FEC] RS decode failed:', (err as Error).message);
+  } catch (_err) {
     // Return data without RS parity (may still be usable)
     const dataWithoutParity = descrambled.subarray(
       0,
@@ -125,8 +123,7 @@ export function decodeV3FECSoft(
   let viterbiOutput: Uint8Array;
   try {
     viterbiOutput = viterbiDecodeSoft(softBits, originalBitCount, V3_FEC_CONFIG.USE_PUNCTURING);
-  } catch (err) {
-    console.warn('[v3-FEC] Soft Viterbi decode failed:', (err as Error).message);
+  } catch (_err) {
     return {
       data: new Uint8Array(0),
       correctedErrors: -1,
@@ -153,8 +150,7 @@ export function decodeV3FECSoft(
       rsSuccess: true,
       success: true,
     };
-  } catch (err) {
-    console.warn('[v3-FEC] RS decode failed after Viterbi:', (err as Error).message);
+  } catch (_err) {
     const dataWithoutParity = descrambled.subarray(
       0,
       descrambled.length - V3_FEC_CONFIG.RS_PARITY_SIZE
@@ -231,7 +227,6 @@ export function decodeHeaderV3FECWithRedundancy(
   }
 
   // Both failed - return first result
-  console.warn('[v3-FEC] Both header copies failed decode');
   return result1;
 }
 

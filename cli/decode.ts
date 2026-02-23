@@ -84,18 +84,31 @@ export async function decodeCommand(
 
       // Feed samples in chunks
       let offset = 0;
+      let postFeedPolls = 0;
+      const MAX_POST_FEED_POLLS = 30; // 3 seconds max after all samples fed
+
       const processChunk = () => {
         if (offset >= samples.length) {
-          // All samples processed, wait a bit for decoder to finish
-          setTimeout(() => {
-            const progress = decoder.progress.value;
-            if (progress.state === 'error') {
-              reject(new Error(progress.errorMessage || 'Decode failed'));
-            } else if (progress.state !== 'complete') {
-              // Still processing, check again
-              setTimeout(processChunk, 100);
-            }
-          }, 500);
+          // All samples processed - poll for completion with a hard limit
+          postFeedPolls++;
+          const progress = decoder.progress.value;
+
+          if (progress.state === 'error') {
+            reject(new Error(progress.errorMessage || 'Decode failed'));
+            return;
+          }
+          if (progress.state === 'complete') {
+            return; // resolve was already called by decoder callback
+          }
+          if (postFeedPolls >= MAX_POST_FEED_POLLS) {
+            reject(new Error(
+              'Decode failed: could not recover header from audio. ' +
+              'Signal may be too distorted. Try: nedagram analyze <file>'
+            ));
+            return;
+          }
+
+          setTimeout(processChunk, 100);
           return;
         }
 

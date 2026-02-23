@@ -390,10 +390,12 @@ export class Decoder {
       this.patternSearchCounter++;
       if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
         this.patternSearchCounter = 0;
-        // If chirp is detected, use precise timing; otherwise fall back to pattern search
+        // If chirp is detected, use precise timing first
         if (this.chirpDetected && this.chirpEndSample > 0) {
           this.findBestPhaseFromChirp();
-        } else {
+        }
+        // If chirp-based search didn't find sync (or no chirp), use exhaustive search
+        if (this.bestPhase < 0) {
           this.findBestPhase();
         }
       }
@@ -699,9 +701,7 @@ export class Decoder {
             setAudioMode(mode);
             this.updateSymbolTiming();
 
-            console.log('[Decoder] Found', mode, 'calibration+sync at phase', phase, 'index', i);
-            console.log('[Decoder] Pattern found:', symbols.slice(i, i + patternLen));
-            console.log('[Decoder] Expected:', fullPattern);
+            console.log(`[Decoder] Found ${mode} calibration+sync at phase ${phase} index ${i} (${symbols.slice(i, i + patternLen).join(',')})`);
             this.lastDebugInfo = `Sync found (${mode} mode)! Receiving header...`;
             return;
           }
@@ -769,8 +769,7 @@ export class Decoder {
             setAudioMode(mode);
             this.updateSymbolTiming();
 
-            console.log('[Decoder] Found', mode, 'loose pattern at phase', phase, 'index', i);
-            console.log('[Decoder] Pattern found:', symbols.slice(i, i + 8));
+            console.log(`[Decoder] Found ${mode} loose pattern at phase ${phase} index ${i} (${symbols.slice(i, i + 8).join(',')})`);
             this.lastDebugInfo = `Sync found (${mode}, loose)!`;
             return;
           }
@@ -899,7 +898,7 @@ export class Decoder {
       sweepOffsets.push(freqOff);
     }
 
-    console.log(`[Decoder] Salvage: frequency sweep (${sweepOffsets.length} offsets, -100 to +100 Hz)`);
+    console.log(`[Decoder] Salvage: frequency sweep (${sweepOffsets.length} offsets, -100 to +100 Hz)...`);
 
     for (const freqOff of sweepOffsets) {
       // Try best phase first, then others
@@ -987,6 +986,150 @@ export class Decoder {
 
     console.log('[Decoder] Salvage: frequency sweep failed');
     return false;
+  }
+
+  /**
+   * Brute-force header recovery in salvage mode.
+   *
+   * When FEC fails, we still have best-effort decoded bytes. Since we know:
+   * - Bytes 0-1 MUST be [0x4E, 0x33] ("N3")
+   * - Byte 2 high nibble MUST be 0x3 (version 3)
+   * - Byte 2 low nibble is flags (0x00-0x07)
+   * - Bytes 10-11 are CRC16 of bytes 0-9
+   *
+   * We fix the known bytes and try single-byte corrections on the remaining
+   * 7 bytes (3-9), checking CRC16 for each candidate.
+   */
+  private bruteForceHeaderRecovery(headerBytes: number, headerSymbols: number): boolean {
+    if (this.bestPhase < 0 || this.syncFoundAt < 0) return false;
+
+    console.log('[Decoder] Salvage: brute-force header recovery...');
+
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+
+    // Collect FEC-failed header candidates from all phases/offsets
+    const candidates: Uint8Array[] = [];
+    const offsets = [0, -1, 1, -2, 2];
+    const phasesToTry = [this.bestPhase];
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (p !== this.bestPhase) phasesToTry.push(p);
+    }
+
+    for (const phase of phasesToTry) {
+      for (const offset of offsets) {
+        const headerStart = this.syncFoundAt + offset;
+        if (headerStart < 0 || headerStart + headerSymbols > this.phaseSymbols[phase].length) continue;
+
+        // Soft decode attempt - get best-effort bytes
+        const softBits = this.extractSoftBitsForSlice(phase, headerStart, headerSymbols, headerBytes);
+        if (softBits) {
+          const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, headerBytes);
+          const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+          if (softResult.data.length >= 12) {
+            candidates.push(new Uint8Array(softResult.data));
+          }
+        }
+
+        // Hard decode attempt
+        const symbols = this.phaseSymbols[phase];
+        const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
+        const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
+        const bytes = deinterleave(bytesRaw, interleaverDepth, headerBytes);
+        const hardResult = decodeHeaderFEC(bytes);
+        if (hardResult.data.length >= 12) {
+          candidates.push(new Uint8Array(hardResult.data));
+        }
+      }
+    }
+
+    if (candidates.length === 0) return false;
+
+    console.log(`[Decoder] Salvage: trying brute-force on ${candidates.length} header candidates`);
+
+    // For each candidate, fix known bytes and try CRC
+    for (const candidate of candidates) {
+      // Fix known bytes
+      candidate[0] = 0x4E; // 'N'
+      candidate[1] = 0x33; // '3'
+
+      // Try all valid flag combinations (8 options)
+      for (let flags = 0; flags <= 0x07; flags++) {
+        candidate[2] = 0x30 | flags; // version 3 + flags
+
+        // Check CRC with known bytes fixed (no other corrections)
+        const header = parseHeaderFrame(candidate);
+        if (header && header.crcValid && this.isPlausibleHeader(header)) {
+          console.log(`[Decoder] Salvage: header recovered via brute-force (flags=${flags})`);
+          return this.acceptBruteForceHeader(header);
+        }
+
+        // Try single-byte corrections on bytes 3-7 (data fields, NOT session ID or CRC)
+        // Bytes 8-9 (session ID) and 10-11 (CRC) are excluded because:
+        // - Changing session ID easily creates false CRC matches
+        // - CRC bytes are validated, not corrected
+        for (let byteIdx = 3; byteIdx <= 7; byteIdx++) {
+          const originalByte = candidate[byteIdx];
+          for (let val = 0; val < 256; val++) {
+            if (val === originalByte) continue;
+            candidate[byteIdx] = val;
+            const h = parseHeaderFrame(candidate);
+            if (h && h.crcValid && this.isPlausibleHeader(h)) {
+              console.log(`[Decoder] Salvage: header recovered via brute-force (fixed byte ${byteIdx}: ${originalByte}->${val})`);
+              return this.acceptBruteForceHeader(h);
+            }
+          }
+          candidate[byteIdx] = originalByte; // Restore
+        }
+      }
+    }
+
+    console.log('[Decoder] Salvage: brute-force failed');
+    return false;
+  }
+
+  /**
+   * Check if a recovered header has plausible values for the audio we have.
+   */
+  private isPlausibleHeader(header: HeaderInfo): boolean {
+    // Basic range checks
+    if (header.totalFrames < 1 || header.totalFrames > 100) return false;
+    if (header.payloadLength < 1 || header.payloadLength > 50000) return false;
+    if (header.originalLength < 1 || header.originalLength > 100000) return false;
+
+    // Original size should be >= payload size (unless encrypted which adds overhead)
+    if (!header.encrypted && header.originalLength < header.payloadLength) return false;
+
+    // If compressed, original should typically be larger than payload
+    // (but not always, so don't enforce strictly)
+
+    // Check that frame count is consistent with payload size
+    // Each frame carries ~FRAME_V3.PAYLOAD_SIZE bytes, so totalFrames should be
+    // roughly payloadLength / frameSize (within 2x tolerance)
+    const estimatedFrames = Math.ceil(header.payloadLength / FRAME_V3.PAYLOAD_SIZE);
+    if (header.totalFrames > estimatedFrames * 2 + 1) return false;
+    if (header.totalFrames < Math.ceil(estimatedFrames / 3)) return false;
+
+    // Check against audio duration — we can estimate max possible data from audio length
+    // Each symbol takes AUDIO.SYMBOL_DURATION_MS ms, and we have a finite number of symbols
+    const symbolsAvailable = this.phaseSymbols[this.bestPhase >= 0 ? this.bestPhase : 0].length;
+    const headerSymbolCount = this.calculateSymbolsForBytes(getHeaderSize()) * (header.totalFrames > 1 ? 2 : 1);
+    const dataSymbolsAvailable = symbolsAvailable - (this.syncFoundAt >= 0 ? this.syncFoundAt : 0) - headerSymbolCount;
+    if (dataSymbolsAvailable < 10) return false; // Not enough data symbols
+
+    return true;
+  }
+
+  private acceptBruteForceHeader(header: HeaderInfo): boolean {
+    this.headerInfo = header;
+    this.headerRepeated = header.totalFrames > 1;
+    this.frameCollector.setHeader(header);
+    this.consecutiveHeaderFailures = 0;
+    this.headerDecodedTime = Date.now();
+    this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+    this.state = 'receiving_data';
+    this.lastDebugInfo = `Header recovered (brute-force)! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
+    console.log('[Decoder] Header valid (brute-force)! Expecting', header.totalFrames, 'frames');
+    return true;
   }
 
   /**
@@ -1291,10 +1434,9 @@ export class Decoder {
       }
     }
 
-    // Log what we tried (for debugging)
+    // Fallback: try direct FEC on best-phase symbols without offset retries
     const headerStart = this.syncFoundAt;
     const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
-    console.log('[Decoder] Header symbols (first 20):', headerSymbolsArr.slice(0, 20));
 
     const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
     const bytes = deinterleave(
@@ -1302,8 +1444,6 @@ export class Decoder {
       calculateInterleaverDepth(headerBytes),
       headerBytes
     );
-    console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
-    console.log('[Decoder] Expected: [78, 51, ...] = "N3" magic (v3 protocol)');
 
     // Try to decode header
     let decodeResult = decodeHeaderFEC(bytes);
@@ -1356,8 +1496,6 @@ export class Decoder {
         console.log('[Decoder] Header invalid:', reason);
       }
     } else {
-      console.log('[Decoder] Header FEC decode failed');
-
       // If we have enough for second copy, try with redundancy
       if (symbolsAfterSync >= headerSymbols * 2) {
         const symbols2Start = headerStart + headerSymbols;
@@ -1394,19 +1532,29 @@ export class Decoder {
       }
     }
 
-    console.log('[Decoder] Header FEC decode failed after trying', offsets.length * phasesToTry.length, 'combinations');
+    const headerSymbolsArr2 = symbols.slice(headerStart, headerStart + headerSymbols);
+    const bytesForLog = deinterleave(
+      this.symbolsToBytes(headerSymbolsArr2, headerBytes),
+      calculateInterleaverDepth(headerBytes),
+      headerBytes
+    );
+    console.log(`[Decoder] Header decode failed (${offsets.length * phasesToTry.length} combinations tried). Bytes[0..3]: [${Array.from(bytesForLog.slice(0, 4))}] (expected [78, 51, ...])`);
 
-    // Salvage mode: frequency sweep - try different frequency offsets
+    // Salvage mode: frequency sweep and brute-force attempts
     if (this.salvageMode) {
       const sweepResult = this.frequencySweepHeaderDecode(headerBytes, headerSymbols);
       if (sweepResult) {
         return; // Success via frequency sweep
       }
+
+      const bruteResult = this.bruteForceHeaderRecovery(headerBytes, headerSymbols);
+      if (bruteResult) {
+        return; // Success via brute-force
+      }
     }
 
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;
-    console.log('[Decoder] Header failure count:', this.consecutiveHeaderFailures);
 
     // Fatal failure - too many header decode failures
     if (this.consecutiveHeaderFailures >= Decoder.FATAL_HEADER_FAILURES) {
@@ -1507,7 +1655,7 @@ export class Decoder {
 
     const start = frameIndex * frameSize;
     const end = Math.min(start + frameSize, totalPayload);
-    return end - start;
+    return Math.max(0, end - start);
   }
 
   private processDataFrame(): void {
@@ -1561,6 +1709,10 @@ export class Decoder {
 
       // Calculate this frame's actual payload size
       const thisFramePayloadSize = this.getActualFramePayloadSize(f);
+      if (thisFramePayloadSize <= 0) {
+        this.framesAttempted.add(f);
+        continue;
+      }
       const thisFrameEncodedBytes = getDataFrameSize(thisFramePayloadSize);
       const frameSymCount = frameSymbolOffsets[f + 1] - frameSymbolOffsets[f];
 
