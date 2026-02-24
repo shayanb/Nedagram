@@ -7,7 +7,6 @@ import {
   ConvolutionalEncoder,
   convolutionalEncode,
   buildStateTransitionTable,
-  buildReverseTransitionTable,
   getDepunctureMap,
   depunctureSoft,
   CONVOLUTIONAL_CONFIG,
@@ -208,36 +207,6 @@ describe('Convolutional Encoder', () => {
 
       // State 1, input 1 -> state 3
       expect(table.get(1)!.get(1)!.nextState).toBe(3);
-    });
-  });
-
-  describe('Reverse Transition Table', () => {
-    it('should have entries for all states', () => {
-      const table = buildReverseTransitionTable();
-      expect(table.size).toBe(64);
-    });
-
-    it('should have 2 predecessors per state', () => {
-      const table = buildReverseTransitionTable();
-
-      for (let state = 0; state < 64; state++) {
-        const prevs = table.get(state)!;
-        expect(prevs.length).toBe(2);
-      }
-    });
-
-    it('should be consistent with forward table', () => {
-      const forward = buildStateTransitionTable();
-      const reverse = buildReverseTransitionTable();
-
-      for (let state = 0; state < 64; state++) {
-        const prevs = reverse.get(state)!;
-
-        for (const { prevState, inputBit } of prevs) {
-          const forwardNext = forward.get(prevState)!.get(inputBit)!.nextState;
-          expect(forwardNext).toBe(state);
-        }
-      }
     });
   });
 

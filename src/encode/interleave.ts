@@ -70,7 +70,7 @@ export function deinterleave(data: Uint8Array, rows: number, originalLength: num
  * Calculate optimal interleaver depth based on frame size
  * We want enough rows to spread out burst errors across multiple RS blocks
  */
-export function calculateInterleaverDepth(frameSize: number): number {
+export function calculateInterleaverDepth(_frameSize: number): number {
   // Use 8 rows as a good balance between burst protection and latency
   return 8;
 }
@@ -114,50 +114,3 @@ export function deinterleaveSoftBits(
   return result;
 }
 
-/**
- * Interleave a complete transmission (all frames concatenated)
- */
-export function interleaveTransmission(frames: Uint8Array[]): {
-  interleaved: Uint8Array;
-  depth: number;
-  originalLengths: number[];
-} {
-  // Concatenate all frames
-  const totalLength = frames.reduce((sum, f) => sum + f.length, 0);
-  const combined = new Uint8Array(totalLength);
-
-  let offset = 0;
-  const originalLengths: number[] = [];
-  for (const frame of frames) {
-    combined.set(frame, offset);
-    originalLengths.push(frame.length);
-    offset += frame.length;
-  }
-
-  const depth = calculateInterleaverDepth(totalLength);
-  const interleaved = interleave(combined, depth);
-
-  return { interleaved, depth, originalLengths };
-}
-
-/**
- * De-interleave and split back into frames
- */
-export function deinterleaveTransmission(
-  interleaved: Uint8Array,
-  depth: number,
-  originalLengths: number[]
-): Uint8Array[] {
-  const totalLength = originalLengths.reduce((sum, l) => sum + l, 0);
-  const deinterleaved = deinterleave(interleaved, depth, totalLength);
-
-  // Split back into frames
-  const frames: Uint8Array[] = [];
-  let offset = 0;
-  for (const length of originalLengths) {
-    frames.push(deinterleaved.subarray(offset, offset + length));
-    offset += length;
-  }
-
-  return frames;
-}

@@ -5,27 +5,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   FrequencyOffsetTracker,
-  detectToneWithOffset,
 } from '../src/decode/freq-offset';
 import { setAudioMode, TONE_FREQUENCIES, AUDIO } from '../src/utils/constants';
-
-// Helper to generate a test tone
-function generateTone(
-  frequency: number,
-  durationMs: number,
-  sampleRate: number,
-  amplitude: number = 0.5
-): Float32Array {
-  const numSamples = Math.floor((durationMs / 1000) * sampleRate);
-  const samples = new Float32Array(numSamples);
-
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    samples[i] = amplitude * Math.sin(2 * Math.PI * frequency * t);
-  }
-
-  return samples;
-}
 
 // Helper to generate calibration tones with optional frequency offset
 function generateCalibrationTones(
@@ -218,63 +199,6 @@ describe('FrequencyOffsetTracker', () => {
       expect(tracker.getOffset()).toBe(0);
       expect(tracker.getConfidence()).toBe(0);
     });
-  });
-});
-
-describe('detectToneWithOffset', () => {
-  const sampleRate = 48000;
-
-  beforeEach(() => {
-    setAudioMode('phone');
-  });
-
-  // Helper to generate FFT magnitudes for a given frequency
-  function generateMagnitudesForFrequency(
-    frequency: number,
-    fftSize: number = 2048
-  ): Float32Array {
-    const samples = generateTone(frequency, 50, sampleRate);
-
-    // Simple DFT to get magnitudes (not efficient but clear)
-    const magnitudes = new Float32Array(fftSize / 2);
-    const binWidth = sampleRate / fftSize;
-
-    for (let bin = 0; bin < magnitudes.length; bin++) {
-      const binFreq = bin * binWidth;
-      // Approximate: peak at the frequency bin
-      const distance = Math.abs(binFreq - frequency);
-      magnitudes[bin] = Math.max(0, 1 - distance / 100) * 100;
-    }
-
-    return magnitudes;
-  }
-
-  it('should detect tone at expected frequency with zero offset', () => {
-    const toneIndex = 1;
-    const frequency = TONE_FREQUENCIES[toneIndex];
-    const magnitudes = generateMagnitudesForFrequency(frequency);
-
-    const result = detectToneWithOffset(magnitudes, sampleRate, 0);
-
-    expect(result.tone).toBe(toneIndex);
-    expect(result.confidence).toBeGreaterThan(0.3);
-  });
-
-  it('should detect shifted tone with offset compensation', () => {
-    const toneIndex = 2;
-    const offset = 15;
-    // Generate tone at shifted frequency
-    const actualFrequency = TONE_FREQUENCIES[toneIndex] + offset;
-    const magnitudes = generateMagnitudesForFrequency(actualFrequency);
-
-    // Without compensation, might detect wrong tone
-    const resultNoOffset = detectToneWithOffset(magnitudes, sampleRate, 0);
-
-    // With compensation, should detect correct tone
-    const resultWithOffset = detectToneWithOffset(magnitudes, sampleRate, offset);
-
-    expect(resultWithOffset.tone).toBe(toneIndex);
-    expect(resultWithOffset.confidence).toBeGreaterThan(resultNoOffset.confidence * 0.5);
   });
 });
 

@@ -228,30 +228,6 @@ export function buildStateTransitionTable(): Map<number, Map<number, { nextState
 }
 
 /**
- * Build reverse state transition table for traceback
- * For each state, returns the two possible previous states and input bits
- */
-export function buildReverseTransitionTable(): Map<number, Array<{ prevState: number; inputBit: number }>> {
-  const table = new Map<number, Array<{ prevState: number; inputBit: number }>>();
-  const numStates = CONVOLUTIONAL_CONFIG.NUM_STATES;
-
-  // Initialize
-  for (let state = 0; state < numStates; state++) {
-    table.set(state, []);
-  }
-
-  // Build reverse transitions
-  for (let prevState = 0; prevState < numStates; prevState++) {
-    for (let inputBit = 0; inputBit <= 1; inputBit++) {
-      const nextState = ((prevState << 1) | inputBit) & (numStates - 1);
-      table.get(nextState)!.push({ prevState, inputBit });
-    }
-  }
-
-  return table;
-}
-
-/**
  * Standalone parity function
  */
 function parity(value: number): number {

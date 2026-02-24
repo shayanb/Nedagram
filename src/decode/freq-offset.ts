@@ -12,7 +12,7 @@
  */
 
 import { fft, magnitude, findPeakFrequency } from '../lib/fft';
-import { AUDIO, TONE_FREQUENCIES } from '../utils/constants';
+import { TONE_FREQUENCIES } from '../utils/constants';
 
 export interface FrequencyOffsetResult {
   /** Estimated offset in Hz (positive = received frequencies are higher) */
@@ -208,68 +208,3 @@ export class FrequencyOffsetTracker {
   }
 }
 
-/**
- * Apply frequency offset compensation to tone detection
- *
- * @param magnitudes - FFT magnitude array
- * @param sampleRate - Sample rate
- * @param offsetHz - Frequency offset to compensate for
- * @returns Detected tone index and confidence
- */
-export function detectToneWithOffset(
-  magnitudes: Float32Array,
-  sampleRate: number,
-  offsetHz: number
-): { tone: number; confidence: number } {
-  const binWidth = sampleRate / (magnitudes.length * 2);
-
-  let bestTone = 0;
-  let bestMagnitude = 0;
-  let totalMagnitude = 0;
-
-  for (let i = 0; i < TONE_FREQUENCIES.length; i++) {
-    // Compensate for frequency offset
-    const compensatedFreq = TONE_FREQUENCIES[i] + offsetHz;
-    const bin = Math.round(compensatedFreq / binWidth);
-
-    if (bin >= 0 && bin < magnitudes.length) {
-      // Sum magnitudes in a small window around the expected bin
-      let magnitude = 0;
-      const windowSize = Math.max(1, Math.round(AUDIO.TONE_SPACING / binWidth / 4));
-
-      for (let j = -windowSize; j <= windowSize; j++) {
-        const idx = bin + j;
-        if (idx >= 0 && idx < magnitudes.length) {
-          magnitude += magnitudes[idx];
-        }
-      }
-
-      totalMagnitude += magnitude;
-
-      if (magnitude > bestMagnitude) {
-        bestMagnitude = magnitude;
-        bestTone = i;
-      }
-    }
-  }
-
-  const confidence = totalMagnitude > 0 ? bestMagnitude / totalMagnitude : 0;
-
-  return { tone: bestTone, confidence };
-}
-
-// Default instance for simple usage
-let defaultTracker: FrequencyOffsetTracker | null = null;
-
-export function getDefaultTracker(): FrequencyOffsetTracker {
-  if (!defaultTracker) {
-    defaultTracker = new FrequencyOffsetTracker();
-  }
-  return defaultTracker;
-}
-
-export function resetDefaultTracker(): void {
-  if (defaultTracker) {
-    defaultTracker.reset();
-  }
-}

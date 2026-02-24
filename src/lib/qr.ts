@@ -43,31 +43,3 @@ export function generateQR(data: string, canvas: HTMLCanvasElement, size?: numbe
   }
 }
 
-/**
- * Generate QR code as data URL
- */
-export function generateQRDataURL(data: string, size = 200): string {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  generateQR(data, canvas, size);
-  return canvas.toDataURL('image/png');
-}
-
-/**
- * Check if data can fit in a QR code
- * Returns the approximate capacity utilization (0-1)
- */
-export function checkQRCapacity(data: string): { canFit: boolean; utilization: number } {
-  // QR code capacity depends on version and error correction
-  // Version 40 with L correction can hold ~4296 alphanumeric chars
-  // For binary data (8-bit), max is ~2953 bytes
-
-  const maxBytes = 2953;
-  const dataBytes = new TextEncoder().encode(data).length;
-
-  return {
-    canFit: dataBytes <= maxBytes,
-    utilization: dataBytes / maxBytes,
-  };
-}

@@ -14,7 +14,7 @@
 import { parseWavFile } from './wav-io.js';
 import { AUDIO, PHONE_MODE, WIDEBAND_MODE, setAudioMode, TONE_FREQUENCIES, type AudioMode } from '../src/utils/constants.js';
 import { ChirpDetector } from '../src/lib/chirp.js';
-import { detectToneSoft, averageConfidence, measureSignalQuality, type SoftDetectionResult } from '../src/decode/soft-decision.js';
+import { detectToneSoft, type SoftDetectionResult } from '../src/decode/soft-decision.js';
 import { FrequencyOffsetTracker, type FrequencyOffsetResult, type ToneMeasurement } from '../src/decode/freq-offset.js';
 
 interface AnalyzeOptions {
@@ -275,8 +275,8 @@ export async function analyzeCommand(
 
     // Step 6: Compute metrics on post-sync symbols (actual data)
     const dataSymbols = syncEndIdx > 0 ? softResults.slice(syncEndIdx) : softResults;
-    const quality = measureSignalQuality(dataSymbols);
-    const avgConf = averageConfidence(dataSymbols);
+    const quality = computeSignalQuality(dataSymbols);
+    const avgConf = computeAverageConfidence(dataSymbols);
     const symbolErrorRate = totalCalibSymbols > 0 ? calibErrors / totalCalibSymbols : 1.0;
     const peakEnergy = computePeakEnergy(samples);
 
@@ -324,6 +324,30 @@ export async function analyzeCommand(
   } finally {
     console.log = originalLog;
   }
+}
+
+function computeAverageConfidence(results: SoftDetectionResult[]): number {
+  if (results.length === 0) return 0;
+  return results.reduce((sum, r) => sum + r.confidence, 0) / results.length;
+}
+
+function computeSignalQuality(results: SoftDetectionResult[]): number {
+  if (results.length === 0) return 0;
+  let qualitySum = 0;
+  for (const result of results) {
+    const soft = result.softValues;
+    let total = 0;
+    let maxVal = 0;
+    for (let i = 0; i < soft.length; i++) {
+      total += soft[i];
+      maxVal = Math.max(maxVal, soft[i]);
+    }
+    if (total > 0) {
+      const dominance = maxVal / total * soft.length;
+      qualitySum += Math.min(1, dominance - 1);
+    }
+  }
+  return qualitySum / results.length;
 }
 
 function computePeakEnergy(samples: Float32Array): number {

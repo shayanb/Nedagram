@@ -41,27 +41,6 @@ export function getSampleRate(): number {
 }
 
 /**
- * Close the audio context (cleanup)
- */
-export function closeAudioContext(): void {
-  if (audioContext) {
-    audioContext.close();
-    audioContext = null;
-  }
-}
-
-/**
- * Check if AudioWorklet is supported
- */
-export function supportsAudioWorklet(): boolean {
-  try {
-    return 'AudioWorklet' in window && 'audioWorklet' in AudioContext.prototype;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Create an audio buffer from Float32Array samples
  */
 export function createAudioBuffer(samples: Float32Array, sampleRate: number): AudioBuffer {
