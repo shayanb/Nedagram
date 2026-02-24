@@ -661,17 +661,18 @@ export function Receive() {
             </Button>
           </div>
 
-          <ChecksumDisplay
-            checksum={result.value.checksum}
-            label={t.send.checksumLabel}
-          />
+          <div class="result-details">
+            <ChecksumDisplay
+              checksum={result.value.checksum}
+              label={t.send.checksumLabel}
+            />
 
-
-          {result.value.stats.originalSize <= LIMITS.QR_MAX_BYTES && (
-            <div class="qr-section">
-              <QRDisplay data={result.value.text} title={t.receive.scanToCopy} />
-            </div>
-          )}
+            {result.value.stats.originalSize <= LIMITS.QR_MAX_BYTES && (
+              <div class="qr-section">
+                <QRDisplay data={result.value.text} title={t.receive.scanToCopy} />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
