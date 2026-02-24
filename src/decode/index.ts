@@ -141,6 +141,9 @@ export class Decoder {
   // Spectral interference compensation (constant background tones)
   private toneBiases: Float32Array | null = null;
 
+  // Protocol mismatch detection
+  private suspectV2Protocol = false;
+
   // Performance throttling
   private patternSearchCounter = 0;
   private static readonly PATTERN_SEARCH_INTERVAL = 3; // Only search patterns every N audio chunks
@@ -926,16 +929,32 @@ export class Decoder {
    * has shifted the frequencies and compensate during symbol detection.
    */
   private estimateFreqOffsetFromCalibration(): void {
-    if (this.chirpEndSample <= 0) return;
-
     const calibrationRepeats = AUDIO.CALIBRATION_REPEATS || 2;
     const calibTones = AUDIO.CALIBRATION_TONES;
     const calibSymbolCount = calibTones.length * calibrationRepeats;
     const calibSampleCount = calibSymbolCount * this.symbolSamples;
 
-    if (this.chirpEndSample + calibSampleCount > this.totalSamplesReceived) return;
+    let calibStartSample: number;
 
-    const calibSamples = this.getBufferSamples(this.chirpEndSample, calibSampleCount);
+    if (this.chirpEndSample > 0) {
+      // Method 1: Use chirp end position (most accurate)
+      calibStartSample = this.chirpEndSample;
+    } else if (this.syncFoundAt >= 0 && this.bestPhase >= 0) {
+      // Method 2: Derive from sync position
+      // syncFoundAt = first header symbol index
+      // Calibration is calibSymbolCount symbols before sync pattern (8 sync symbols)
+      const syncLen = AUDIO.SYNC_PATTERN.length;
+      const calibSymbolIdx = this.syncFoundAt - syncLen - calibSymbolCount;
+      if (calibSymbolIdx < 0) return;
+      calibStartSample = this.bestPhase * this.phaseOffset + calibSymbolIdx * this.symbolSamples;
+    } else {
+      return;
+    }
+
+    if (calibStartSample + calibSampleCount > this.totalSamplesReceived) return;
+    if (calibStartSample < 0) return;
+
+    const calibSamples = this.getBufferSamples(calibStartSample, calibSampleCount);
 
     // Build expected tone sequence: [0,1,2,3, 0,1,2,3] for phone
     const expectedTones: number[] = [];
@@ -958,6 +977,7 @@ export class Decoder {
     // If significant offset detected, re-extract symbols from sync position onward
     this.reextractWithOffset();
   }
+
 
   /**
    * Re-extract symbols from sync position onward with the estimated frequency offset.
@@ -1086,22 +1106,6 @@ export class Decoder {
     console.log(`[Decoder] Spectral interference: tone ${maxIdx} noise ${maxNoise.toFixed(1)} (${(maxNoise/otherAvg).toFixed(1)}x others)`);
 
     return true;
-  }
-
-  /**
-   * Re-extract symbols with tone bias compensation.
-   * Clears symbols from sync position onward so they get re-extracted with biases.
-   */
-  private reextractWithBiases(): void {
-    if (!this.toneBiases) return;
-
-    console.log('[Decoder] Re-extracting symbols with interference compensation');
-    for (let p = 0; p < NUM_PHASES; p++) {
-      if (this.phaseSymbols[p].length > this.syncFoundAt) {
-        this.phaseSymbols[p] = this.phaseSymbols[p].slice(0, this.syncFoundAt);
-        this.phaseSoftSymbols[p] = this.phaseSoftSymbols[p].slice(0, this.syncFoundAt);
-      }
-    }
   }
 
   /**
@@ -1372,6 +1376,7 @@ export class Decoder {
   ): SoftDetectionResult[] {
     const results: SoftDetectionResult[] = [];
     const offset = phase * this.phaseOffset;
+    const biases = this.toneBiases ?? undefined;
 
     const offsetGuard = this.getEffectiveGuardSamples();
     for (let i = 0; i < count; i++) {
@@ -1382,7 +1387,7 @@ export class Decoder {
       if (analysisStart + analysisLength > this.totalSamplesReceived) break;
 
       const samples = this.getBufferSamples(analysisStart, analysisLength);
-      results.push(detectToneSoft(samples, this.sampleRate, freqOffset, this.toneBiases ?? undefined));
+      results.push(detectToneSoft(samples, this.sampleRate, freqOffset, biases));
     }
 
     return results;
@@ -1609,6 +1614,106 @@ export class Decoder {
     return null;
   }
 
+  /**
+   * Try header decode by combining soft bits from multiple phases.
+   * Different phases sample the symbol at different timing offsets within the symbol period,
+   * providing partially independent measurements. Averaging improves SNR (~3-6 dB for 4 phases).
+   */
+  private tryHeaderMultiPhaseCombined(
+    headerBytes: number,
+    headerSymbols: number
+  ): { header: HeaderInfo; correctedErrors: number } | null {
+    const offsets = [0, -1, 1, -2, 2];
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+
+    for (const offset of offsets) {
+      const headerStart = this.syncFoundAt + offset;
+
+      // Collect soft bits from all available phases
+      const allPhaseSoftBits: number[][] = [];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        const softBits = this.extractSoftBitsForSlice(p, headerStart, headerSymbols, headerBytes);
+        if (softBits) {
+          allPhaseSoftBits.push(softBits);
+        }
+      }
+
+      if (allPhaseSoftBits.length < 2) continue;
+
+      // Average soft bits across phases
+      const combined: number[] = new Array(allPhaseSoftBits[0].length);
+      for (let i = 0; i < combined.length; i++) {
+        let sum = 0;
+        for (const phaseBits of allPhaseSoftBits) {
+          sum += phaseBits[i];
+        }
+        combined[i] = sum / allPhaseSoftBits.length;
+      }
+
+      const deinterleavedSoft = deinterleaveSoftBits(combined, interleaverDepth, headerBytes);
+      const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+      if (softResult.success) {
+        const header = parseHeaderFrame(softResult.data);
+        if (header && header.crcValid) {
+          console.log(`[Decoder] Header recovered via multi-phase combining (${allPhaseSoftBits.length} phases, offset=${offset})`);
+          return { header, correctedErrors: softResult.correctedErrors };
+        }
+      }
+
+      // Also try redundant copy combining
+      const symbols2Start = headerStart + headerSymbols;
+      const allPhase2SoftBits: number[][] = [];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        const softBits2 = this.extractSoftBitsForSlice(p, symbols2Start, headerSymbols, headerBytes);
+        if (softBits2) {
+          allPhase2SoftBits.push(softBits2);
+        }
+      }
+
+      if (allPhase2SoftBits.length >= 2) {
+        const combined2: number[] = new Array(allPhase2SoftBits[0].length);
+        for (let i = 0; i < combined2.length; i++) {
+          let sum = 0;
+          for (const phaseBits of allPhase2SoftBits) {
+            sum += phaseBits[i];
+          }
+          combined2[i] = sum / allPhase2SoftBits.length;
+        }
+
+        const deinterleavedSoft2 = deinterleaveSoftBits(combined2, interleaverDepth, headerBytes);
+        const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+        if (redundantResult.success) {
+          const header = parseHeaderFrame(redundantResult.data);
+          if (header && header.crcValid) {
+            console.log(`[Decoder] Header recovered via multi-phase combining + redundancy (offset=${offset})`);
+            return { header, correctedErrors: redundantResult.correctedErrors };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate average soft confidence for a range of symbols.
+   * Used for diagnostic comparison of preamble vs header signal quality.
+   */
+  private averageSoftConfidence(phase: number, startIndex: number, count: number): number {
+    const softResults = this.phaseSoftSymbols[phase];
+    if (!softResults || startIndex < 0) return 0;
+
+    const start = Math.max(0, startIndex);
+    const end = Math.min(softResults.length, start + count);
+    if (end <= start) return 0;
+
+    let sum = 0;
+    for (let i = start; i < end; i++) {
+      sum += softResults[i].confidence;
+    }
+    return sum / (end - start);
+  }
+
   private processHeader(): void {
     const symbols = this.phaseSymbols[this.bestPhase];
 
@@ -1676,6 +1781,26 @@ export class Decoder {
           console.log('[Decoder] Header valid! Expecting', result.header.totalFrames, 'frames');
           return;
         }
+      }
+    }
+
+    // === MULTI-PHASE SOFT COMBINING ===
+    // When individual phases fail, try averaging soft bits from all phases.
+    // Different phases sample the symbol at different timing offsets,
+    // providing partially independent measurements (~3-6 dB SNR gain).
+    {
+      const combineResult = this.tryHeaderMultiPhaseCombined(headerBytes, headerSymbols);
+      if (combineResult) {
+        this.headerInfo = combineResult.header;
+        this.headerRepeated = combineResult.header.totalFrames > 1;
+        this.frameCollector.setHeader(combineResult.header);
+        this.totalErrorsFixed += Math.max(0, combineResult.correctedErrors);
+        this.consecutiveHeaderFailures = 0;
+        this.headerDecodedTime = Date.now();
+        this.expectedEndTime = this.calculateExpectedEndTime(combineResult.header.totalFrames);
+        this.state = 'receiving_data';
+        this.lastDebugInfo = `Header OK (multi-phase)! Frames: ${combineResult.header.totalFrames}, Size: ${combineResult.header.originalLength}`;
+        return;
       }
     }
 
@@ -1777,13 +1902,46 @@ export class Decoder {
       }
     }
 
-    const headerSymbolsArr2 = symbols.slice(headerStart, headerStart + headerSymbols);
-    const bytesForLog = deinterleave(
-      this.symbolsToBytes(headerSymbolsArr2, headerBytes),
-      calculateInterleaverDepth(headerBytes),
-      headerBytes
-    );
-    console.log(`[Decoder] Header decode failed (${offsets.length * phasesToTry.length} combinations tried). Bytes[0..3]: [${Array.from(bytesForLog.slice(0, 4))}] (expected [78, 51, ...])`);
+    // Diagnostic: show Viterbi best-effort decoded bytes and signal quality comparison
+    const softBitsForDiag = this.extractSoftBitsForSlice(this.bestPhase, this.syncFoundAt, headerSymbols, headerBytes);
+    let diagBytesStr = '?';
+    if (softBitsForDiag) {
+      const deintSoft = deinterleaveSoftBits(softBitsForDiag, calculateInterleaverDepth(headerBytes), headerBytes);
+      const diagResult = decodeHeaderFECSoft(deintSoft);
+      if (diagResult.data.length > 0) {
+        diagBytesStr = `[${Array.from(diagResult.data.slice(0, 4))}]`;
+      } else {
+        // Fallback to raw coded bytes
+        const headerSymbolsArr2 = symbols.slice(headerStart, headerStart + headerSymbols);
+        const bytesForLog = deinterleave(
+          this.symbolsToBytes(headerSymbolsArr2, headerBytes),
+          calculateInterleaverDepth(headerBytes),
+          headerBytes
+        );
+        diagBytesStr = `[${Array.from(bytesForLog.slice(0, 4))}] (coded)`;
+      }
+
+    }
+    const preambleConf = this.averageSoftConfidence(this.bestPhase, this.syncFoundAt - 16, 16);
+    const headerConf = this.averageSoftConfidence(this.bestPhase, this.syncFoundAt, Math.min(headerSymbols, 50));
+    console.log(`[Decoder] Header decode failed (${offsets.length * phasesToTry.length} combinations tried). Bytes[0..3]: ${diagBytesStr} (expected [78, 51, ...])`);
+    console.log(`[Decoder] Signal quality: preamble ${(preambleConf * 100).toFixed(0)}% → header ${(headerConf * 100).toFixed(0)}% confidence`);
+
+    // Detect v2 protocol: v3 interleaved header always starts with 0xDB,
+    // v2 (RS-only, no convolutional) starts with 0x4E ('N' magic byte)
+    if (headerConf > 0.6) {
+      const rawHeaderSymbols = symbols.slice(headerStart, headerStart + headerSymbols);
+      const rawInterleavedBytes = this.symbolsToBytes(rawHeaderSymbols, headerBytes);
+      if (rawInterleavedBytes[0] === 0x4E) {
+        this.suspectV2Protocol = true;
+        console.log('[Decoder] Warning: raw data starts with 0x4E (v2 protocol signature). Sender may be running outdated code.');
+        // Set error message on progress so CLI timeout path can use it
+        this.progress.value = {
+          ...this.progress.value,
+          errorMessage: 'could not decode header. The sender appears to be running an outdated version (v2 protocol). Ask them to reload/clear their browser cache and resend.',
+        };
+      }
+    }
 
     // Salvage mode: frequency sweep and brute-force attempts
     if (this.salvageMode) {
@@ -1927,9 +2085,14 @@ export class Decoder {
       }
 
       // Already tried both modes or no mode detected - give up
-      const errorMsg = this.modeRetryAttempted
-        ? 'Decoding failed in both modes. Try moving closer or reducing background noise.'
-        : 'Too many header decode failures. Check signal quality and try again.';
+      let errorMsg: string;
+      if (this.suspectV2Protocol) {
+        errorMsg = 'could not decode header. The sender appears to be running an outdated version. Ask them to reload/clear cache and resend.';
+      } else if (this.modeRetryAttempted) {
+        errorMsg = 'could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+      } else {
+        errorMsg = 'could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+      }
 
       console.error('[Decoder] Fatal: Too many header failures, giving up');
       this.state = 'error';

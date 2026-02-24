@@ -181,4 +181,14 @@
   .debug-log.expanded .debug-entries {
     max-height: 200px;
   }
+
+  .debug-actions {
+    margin-top: var(--space-sm);
+  }
+
+  .debug-btn {
+    padding: 8px;
+    font-size: 13px;
+    min-height: 36px;
+  }
 }

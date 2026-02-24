@@ -102,10 +102,19 @@ export async function decodeCommand(
             return; // resolve was already called by decoder callback
           }
           if (postFeedPolls >= MAX_POST_FEED_POLLS) {
-            reject(new Error(
-              'Decode failed: could not recover header from audio. ' +
-              'Signal may be too distorted. Try: nedagram analyze <file>'
-            ));
+            const state = progress.state;
+            let msg: string;
+            if (state === 'receiving_data') {
+              msg = `Decode failed: header OK but data frame incomplete (${progress.framesReceived}/${progress.totalFrames} frames). ` +
+                'Recording may be too short or signal too distorted.';
+            } else if (state === 'receiving_header') {
+              msg = progress.errorMessage
+                ? `Decode failed: ${progress.errorMessage}`
+                : 'Decode failed: could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+            } else {
+              msg = 'Decode failed: could not recover signal from audio. Try: nedagram analyze <file>';
+            }
+            reject(new Error(msg));
             return;
           }
 

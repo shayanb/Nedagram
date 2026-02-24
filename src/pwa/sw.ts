@@ -2,7 +2,7 @@
 
 declare const self: ServiceWorkerGlobalScope;
 
-const CACHE_NAME = 'nedagram-v1';
+const CACHE_NAME = 'nedagram-v3';
 
 const STATIC_ASSETS = [
   '/',
