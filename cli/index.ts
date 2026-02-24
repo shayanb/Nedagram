@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { encodeCommand } from './encode.js';
 import { decodeCommand } from './decode.js';
+import { analyzeCommand } from './analyze.js';
 import { serveCommand } from './serve.js';
 
 // Version injected at build time
@@ -24,6 +25,7 @@ Examples:
   $ echo "text" | nedagram encode -o piped.wav
   $ nedagram decode message.wav
   $ nedagram decode encrypted.wav -p secret
+  $ nedagram analyze recording.wav
   $ nedagram serve
 
 For more information, visit: https://github.com/shayanb/Nedagram`);
@@ -63,6 +65,7 @@ program
   .argument('<file>', 'WAV file to decode')
   .option('-o, --output <path>', 'Write decoded text to file instead of stdout')
   .option('-p, --password <password>', 'Password to decrypt an encrypted message')
+  .option('-s, --salvage', 'Best-effort recovery with relaxed thresholds (for weak/corrupted signals)')
   .option('-q, --quiet', 'Suppress progress output (only show result)')
   .option('--json', 'Output result as JSON (includes message, metadata, sha256)')
   .addHelpText('after', `
@@ -70,11 +73,38 @@ Decryption:
   If the message was encrypted, you must provide the same password
   that was used during encoding with -p/--password.
 
+Salvage Mode:
+  Use --salvage for best-effort partial recovery from weak or corrupted
+  signals. Relaxes sync thresholds and extends timeouts. Run "analyze"
+  first to check signal quality.
+
 Examples:
   $ nedagram decode message.wav
   $ nedagram decode encrypted.wav -p "my password"
-  $ nedagram decode message.wav -o output.txt`)
+  $ nedagram decode message.wav -o output.txt
+  $ nedagram decode --salvage noisy-recording.wav`)
   .action(decodeCommand);
+
+// Analyze command
+program
+  .command('analyze')
+  .description('Analyze a WAV file for signal quality without decoding')
+  .argument('<file>', 'WAV file to analyze')
+  .option('--json', 'Output result as JSON')
+  .addHelpText('after', `
+The analyze command examines a WAV file and reports signal quality
+metrics. Use this to diagnose why a decode might fail before
+attempting recovery with --salvage.
+
+Metrics reported:
+  Signal Quality     - How clearly tones stand out from noise (0-100%)
+  Avg Confidence     - Average tone detection confidence (0-100%)
+  Symbol Error Rate  - Calibration pattern error rate (lower is better)
+
+Examples:
+  $ nedagram analyze recording.wav
+  $ nedagram analyze recording.wav --json`)
+  .action(analyzeCommand);
 
 // Serve command
 program

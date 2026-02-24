@@ -11,6 +11,9 @@ import {
   decodeHeaderV3FEC,
   decodeDataV3FEC,
   decodeHeaderV3FECWithRedundancy,
+  decodeHeaderV3FECSoft,
+  decodeDataV3FECSoft,
+  decodeHeaderV3FECSoftWithRedundancy,
   getV3HeaderEncodedSize,
   getV3DataEncodedSize,
   V3FECDecodeResult,
@@ -88,6 +91,33 @@ export function decodeHeaderWithRedundancy(
   copy2: Uint8Array
 ): FECDecodeResult {
   return toFECResult(decodeHeaderV3FECWithRedundancy(copy1, copy2));
+}
+
+/**
+ * Decode header frame with soft-decision input
+ * Provides ~2-3 dB improvement over hard-decision decoding
+ */
+export function decodeHeaderFECSoft(softBits: number[]): FECDecodeResult {
+  return toFECResult(decodeHeaderV3FECSoft(softBits));
+}
+
+/**
+ * Decode data frame with soft-decision input
+ */
+export function decodeDataFECSoft(softBits: number[], payloadSize: number): FECDecodeResult {
+  return toFECResult(decodeDataV3FECSoft(softBits, payloadSize));
+}
+
+/**
+ * Decode header with soft redundancy combining (two copies).
+ * Averages soft bit values from both copies before decoding,
+ * then falls back to individual copies.
+ */
+export function decodeHeaderWithRedundancySoft(
+  softBits1: number[],
+  softBits2: number[]
+): FECDecodeResult {
+  return toFECResult(decodeHeaderV3FECSoftWithRedundancy(softBits1, softBits2));
 }
 
 /**

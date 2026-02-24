@@ -1,6 +1,6 @@
 {
   "name": "nedagram",
-  "version": "3.1.3",
+  "version": "3.1.5",
   "description": "Encode and decode text as audio signals - CLI tool for transmitting data over phone calls and audio channels",
   "type": "module",
   "bin": {
@@ -34,6 +34,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:stress": "STRESS=1 vitest run tests/stress.test.ts",
     "test:cli": "vitest run tests/cli.test.ts",
     "build:cli": "node scripts/build-cli.mjs",
     "cli": "node dist-cli/nedagram-cli/index.cjs"

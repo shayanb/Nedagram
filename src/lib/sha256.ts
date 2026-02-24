@@ -137,11 +137,3 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
     .join('');
 }
 
-/**
- * Calculate SHA-256 hash of a string (UTF-8 encoded)
- */
-export async function sha256String(str: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(str);
-  return sha256Hex(data);
-}

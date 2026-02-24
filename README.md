@@ -246,6 +246,13 @@ nedagram decode encrypted.wav -p "password"
 # Decode to file
 nedagram decode message.wav -o output.txt
 
+# Decode with salvage mode (for weak/corrupted signals)
+nedagram decode --salvage noisy-recording.wav
+
+# Analyze signal quality without decoding
+nedagram analyze recording.wav
+nedagram analyze recording.wav --json
+
 # Pipe input/output
 echo "Hello" | nedagram encode -o hello.wav
 nedagram decode message.wav > output.txt
@@ -269,8 +276,14 @@ nedagram decode message.wav > output.txt
 |--------|-------------|
 | `-o, --output <path>` | Write decoded text to file |
 | `-p, --password <pwd>` | Password for decryption |
+| `-s, --salvage` | Best-effort recovery for weak/corrupted signals |
 | `-q, --quiet` | Suppress progress output |
 | `--json` | Output result as JSON (includes message, metadata, sha256) |
+
+**Analyze:**
+| Option | Description |
+|--------|-------------|
+| `--json` | Output result as JSON |
 
 ## Development
 
@@ -306,6 +319,9 @@ npm test
 
 # Run CLI tests
 npm run test:cli
+
+# Run stress tests (FEC error correction limits, takes longer)
+npm run test:stress
 ```
 
 ### Tech Stack

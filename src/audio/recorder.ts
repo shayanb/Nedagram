@@ -180,13 +180,6 @@ export function stopRecording(): void {
 }
 
 /**
- * Check if currently recording
- */
-export function getIsRecording(): boolean {
-  return isRecording;
-}
-
-/**
  * Calculate audio level (0-100)
  */
 function calculateLevel(samples: Float32Array): number {
@@ -201,17 +194,6 @@ function calculateLevel(samples: Float32Array): number {
   const normalized = Math.max(0, Math.min(100, (db + 60) * (100 / 60)));
 
   return normalized;
-}
-
-/**
- * Get frequency spectrum data (for visualization)
- */
-export function getFrequencyData(): Uint8Array | null {
-  if (!analyserNode) return null;
-
-  const data = new Uint8Array(analyserNode.frequencyBinCount);
-  analyserNode.getByteFrequencyData(data);
-  return data;
 }
 
 /**
@@ -241,9 +223,3 @@ export function clearRecordedAudio(): void {
   recordedChunks = [];
 }
 
-/**
- * Check if there's recorded audio available
- */
-export function hasRecordedAudio(): boolean {
-  return recordedChunks.length > 0;
-}

@@ -354,6 +354,3 @@ export class RSDecoder {
   }
 }
 
-// Create default encoder/decoder for our frame size (32 parity bytes)
-export const rsEncoder = new RSEncoder(32);
-export const rsDecoder = new RSDecoder(32);

@@ -67,6 +67,13 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
+  // Skip caching for Vite dev server requests (source files, HMR, etc.)
+  if (url.pathname.startsWith('/src/') ||
+      url.pathname.startsWith('/@') ||
+      url.pathname.startsWith('/node_modules/')) {
+    return; // Let the browser fetch directly from Vite dev server
+  }
+
   // For HTML (navigation requests): NETWORK-FIRST with cache fallback
   // Online: get fresh HTML, cache it
   // Offline: serve from cache

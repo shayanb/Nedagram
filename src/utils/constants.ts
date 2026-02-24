@@ -87,7 +87,7 @@ setAudioMode('phone');
 // FEC settings - single mode with 16 parity bytes
 // Corrects up to 8 byte errors per frame
 
-// Frame structure - optimized for minimal overhead
+// Frame structure base constants (shared between protocol versions)
 export const FRAME = {
   // Payload sizes
   PAYLOAD_SIZE: 128,        // Max payload per frame
@@ -96,15 +96,13 @@ export const FRAME = {
   // RS parity - 16 bytes = corrects up to 8 byte errors per frame
   RS_PARITY_SIZE: 16,
 
-  // Header - compact format (12 bytes vs old 25)
+  // Header - compact format (12 bytes)
   HEADER_SIZE: 12,
 
-  // Magic bytes - shortened
-  HEADER_MAGIC: 'N1',       // 2 bytes (was 4)
-  DATA_MAGIC: 'D',          // 1 byte (was 2)
-
-  // Version
-  CURRENT_VERSION: 0x02,    // New compact version
+  // Legacy v2 magic/version (kept as base, overridden by FRAME_V3)
+  HEADER_MAGIC: 'N1',
+  DATA_MAGIC: 'D',
+  CURRENT_VERSION: 0x02,
 
   // Compression algorithms (in flags)
   COMPRESSION_NONE: 0,

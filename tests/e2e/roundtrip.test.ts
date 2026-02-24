@@ -5,7 +5,8 @@ import { packetize, createHeaderFrame, createDataFrame, FLAG_CRC32_PRESENT } fro
 import { parseHeaderFrame, parseDataFrame, FrameCollector } from '../../src/decode/deframe';
 import { processPayload } from '../../src/decode/decompress';
 import { encodeDataV3FEC, V3_FEC_CONFIG } from '../../src/encode/v3-fec';
-import { decodeDataV3FEC } from '../../src/decode/v3-fec';
+import { decodeDataV3FEC, decodeDataV3FECSoft } from '../../src/decode/v3-fec';
+import { hardToSoft, unpackBits } from '../../src/decode/viterbi';
 import { stringToBytes, bytesToString } from '../../src/utils/helpers';
 import { crc32Bytes } from '../../src/lib/crc32';
 
@@ -204,6 +205,52 @@ describe('End-to-End Roundtrip', () => {
       encoded[80] ^= 0x0F;
 
       const { data: decoded, success } = decodeDataV3FEC(encoded, payloadSize);
+
+      expect(success).toBe(true);
+      expect(Array.from(decoded)).toEqual(Array.from(dataFrame));
+    });
+  });
+
+  describe('Soft FEC roundtrip', () => {
+    it('should decode with soft-decision Viterbi (no errors)', () => {
+      const payloadSize = 64;
+      const dataFrame = new Uint8Array(3 + payloadSize);
+      dataFrame[0] = 0x44; // 'D' magic
+      dataFrame[1] = 1;    // frame index
+      dataFrame[2] = payloadSize;
+      for (let i = 3; i < dataFrame.length; i++) dataFrame[i] = (i * 2) % 256;
+
+      const encoded = encodeDataV3FEC(dataFrame);
+
+      // Convert hard bytes to soft bits (perfect signal: 0.0 or 1.0)
+      const softBits = hardToSoft(unpackBits(encoded));
+
+      const { data: decoded, success, correctedErrors } = decodeDataV3FECSoft(softBits, payloadSize);
+
+      expect(success).toBe(true);
+      expect(Array.from(decoded)).toEqual(Array.from(dataFrame));
+      expect(correctedErrors).toBe(0);
+    });
+
+    it('should correct noisy soft bits', () => {
+      const payloadSize = 64;
+      const dataFrame = new Uint8Array(3 + payloadSize);
+      dataFrame[0] = 0x44;
+      dataFrame[1] = 2;
+      dataFrame[2] = payloadSize;
+      for (let i = 3; i < dataFrame.length; i++) dataFrame[i] = (i * 3) % 256;
+
+      const encoded = encodeDataV3FEC(dataFrame);
+      const softBits = hardToSoft(unpackBits(encoded));
+
+      // Add noise: shift soft values towards uncertainty
+      for (let i = 0; i < softBits.length; i++) {
+        // Push towards 0.5 with some randomness
+        const noise = (Math.random() - 0.5) * 0.3;
+        softBits[i] = Math.max(0, Math.min(1, softBits[i] + noise));
+      }
+
+      const { data: decoded, success } = decodeDataV3FECSoft(softBits, payloadSize);
 
       expect(success).toBe(true);
       expect(Array.from(decoded)).toEqual(Array.from(dataFrame));

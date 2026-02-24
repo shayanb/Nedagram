@@ -107,6 +107,33 @@
   margin: var(--space-xs) 0 0 0;
 }
 
+.last-recording {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.last-recording-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.last-recording-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.last-recording-time {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
 .receive-page.dragging {
   position: relative;
 }
@@ -340,7 +367,8 @@
 }
 
 .result-status {
-  font-weight: 500;
+  font-weight: 600;
+  font-size: var(--font-size-lg);
 }
 
 .result-status.success {
@@ -353,26 +381,38 @@
 }
 
 .result-text {
-  max-height: 300px;
+  max-height: 400px;
   overflow: auto;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
+  background: rgba(74, 158, 107, 0.08);
+  border: none;
+  border-left: 4px solid var(--color-success);
   border-radius: var(--radius-sm);
-  padding: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  min-height: 48px;
 }
 
 .result-text pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--font-size-sm);
+  font-family: inherit;
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--color-text);
 }
 
 .result-actions {
   display: flex;
   gap: var(--space-sm);
   flex-wrap: wrap;
+}
+
+.result-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
 }
 
 .qr-section {
@@ -382,7 +422,11 @@
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  margin-top: var(--space-sm);
+}
+
+/* Dark mode adjustments for message card */
+[data-theme="dark"] .result-text {
+  background: rgba(74, 158, 107, 0.1);
 }
 
 /* Password/Encryption UI */

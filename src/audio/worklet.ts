@@ -41,34 +41,3 @@ class NedagramProcessor extends AudioWorkletProcessor {
 registerProcessor('nedagram-processor', NedagramProcessor);
 `;
 
-/**
- * Load the AudioWorklet processor
- */
-export async function loadWorklet(audioContext: AudioContext): Promise<void> {
-  const blob = new Blob([workletCode], { type: 'application/javascript' });
-  const url = URL.createObjectURL(blob);
-
-  try {
-    await audioContext.audioWorklet.addModule(url);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-/**
- * Create a worklet node for audio processing
- */
-export function createWorkletNode(
-  audioContext: AudioContext,
-  onSamples: (samples: Float32Array) => void
-): AudioWorkletNode {
-  const node = new AudioWorkletNode(audioContext, 'nedagram-processor');
-
-  node.port.onmessage = (event) => {
-    if (event.data.type === 'samples') {
-      onSamples(event.data.data);
-    }
-  };
-
-  return node;
-}

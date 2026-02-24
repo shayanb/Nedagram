@@ -1,8 +1,8 @@
 /**
- * Frame packetization for audio transmission - COMPACT FORMAT
+ * Frame packetization for audio transmission - COMPACT FORMAT (v3)
  *
  * Header (12 bytes):
- *   [0-1]  Magic "N1"
+ *   [0-1]  Magic "N3"
  *   [2]    Version (4 bits) + Flags (4 bits: bit0=compressed)
  *   [3]    Total frames (1 byte, up to 255)
  *   [4-5]  Payload length (2 bytes, up to 64KB)

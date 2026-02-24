@@ -60,8 +60,7 @@ export function decodeV3FEC(
   let viterbiOutput: Uint8Array;
   try {
     viterbiOutput = viterbiDecode(received, originalBitCount, V3_FEC_CONFIG.USE_PUNCTURING);
-  } catch (err) {
-    console.warn('[v3-FEC] Viterbi decode failed:', (err as Error).message);
+  } catch (_err) {
     return {
       data: new Uint8Array(0),
       correctedErrors: -1,
@@ -88,8 +87,7 @@ export function decodeV3FEC(
       rsSuccess: true,
       success: true,
     };
-  } catch (err) {
-    console.warn('[v3-FEC] RS decode failed:', (err as Error).message);
+  } catch (_err) {
     // Return data without RS parity (may still be usable)
     const dataWithoutParity = descrambled.subarray(
       0,
@@ -125,8 +123,7 @@ export function decodeV3FECSoft(
   let viterbiOutput: Uint8Array;
   try {
     viterbiOutput = viterbiDecodeSoft(softBits, originalBitCount, V3_FEC_CONFIG.USE_PUNCTURING);
-  } catch (err) {
-    console.warn('[v3-FEC] Soft Viterbi decode failed:', (err as Error).message);
+  } catch (_err) {
     return {
       data: new Uint8Array(0),
       correctedErrors: -1,
@@ -153,8 +150,7 @@ export function decodeV3FECSoft(
       rsSuccess: true,
       success: true,
     };
-  } catch (err) {
-    console.warn('[v3-FEC] RS decode failed after Viterbi:', (err as Error).message);
+  } catch (_err) {
     const dataWithoutParity = descrambled.subarray(
       0,
       descrambled.length - V3_FEC_CONFIG.RS_PARITY_SIZE
@@ -231,7 +227,44 @@ export function decodeHeaderV3FECWithRedundancy(
   }
 
   // Both failed - return first result
-  console.warn('[v3-FEC] Both header copies failed decode');
+  return result1;
+}
+
+/**
+ * Decode header with soft redundancy combining (two copies).
+ * Averages soft bit values from both copies before Viterbi decoding.
+ * This provides ~3dB combining gain over using a single copy.
+ */
+export function decodeHeaderV3FECSoftWithRedundancy(
+  softBits1: number[],
+  softBits2: number[]
+): V3FECDecodeResult {
+  // Average soft values from both copies for maximum combining gain
+  const minLen = Math.min(softBits1.length, softBits2.length);
+  const combined: number[] = new Array(minLen);
+  for (let i = 0; i < minLen; i++) {
+    combined[i] = (softBits1[i] + softBits2[i]) / 2;
+  }
+
+  const combinedResult = decodeV3FECSoft(combined, 'header');
+  if (combinedResult.success) {
+    console.log('[v3-FEC] Soft redundancy combining succeeded');
+    return combinedResult;
+  }
+
+  // Fallback: try each copy independently
+  const result1 = decodeV3FECSoft(softBits1, 'header');
+  if (result1.success) {
+    console.log('[v3-FEC] Soft decode from copy1 (copy2 failed)');
+    return result1;
+  }
+
+  const result2 = decodeV3FECSoft(softBits2, 'header');
+  if (result2.success) {
+    console.log('[v3-FEC] Soft decode from copy2 (copy1 failed)');
+    return result2;
+  }
+
   return result1;
 }
 

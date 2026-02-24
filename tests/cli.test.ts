@@ -477,4 +477,63 @@ describe('CLI', () => {
       }
     });
   });
+
+  describe('Analyze', () => {
+    it('should show analyze help', () => {
+      const result = cli(['analyze', '--help']);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Analyze a WAV file for signal quality');
+    });
+
+    it('should analyze an encoded WAV file', () => {
+      const wavFile = join(testDir, 'analyze-test.wav');
+      cli(['encode', 'Analyze me', '-o', wavFile, '-q']);
+
+      const result = cli(['analyze', wavFile]);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('Signal Analysis');
+      expect(result.stderr).toContain('Preamble');
+      expect(result.stderr).toContain('Signal Quality');
+    });
+
+    it('should output JSON when --json flag is used', () => {
+      const wavFile = join(testDir, 'analyze-json.wav');
+      cli(['encode', 'JSON analyze', '-o', wavFile, '-q']);
+
+      const result = cli(['analyze', wavFile, '--json']);
+      expect(result.status).toBe(0);
+
+      const json = JSON.parse(result.stdout);
+      expect(json.success).toBe(true);
+      expect(json.chirpDetected).toBe(true);
+      expect(typeof json.signalQuality).toBe('number');
+      expect(typeof json.averageConfidence).toBe('number');
+    });
+
+    it('should fail with non-existent file', () => {
+      const result = cli(['analyze', '/nonexistent/file.wav']);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Error');
+    });
+  });
+
+  describe('Salvage Mode', () => {
+    it('should show salvage option in decode help', () => {
+      const result = cli(['decode', '--help']);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('--salvage');
+      expect(result.stdout).toContain('Best-effort recovery');
+    });
+
+    it('should decode normally with --salvage flag', () => {
+      const wavFile = join(testDir, 'salvage-test.wav');
+      const message = 'Salvage test message';
+
+      cli(['encode', message, '-o', wavFile, '-q']);
+      const result = cli(['decode', wavFile, '-s', '-q']);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe(message);
+    });
+  });
 });

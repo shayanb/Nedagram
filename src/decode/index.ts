@@ -10,13 +10,15 @@
 import { signal } from '@preact/signals';
 import { AUDIO, FRAME_V3, PHONE_MODE, WIDEBAND_MODE, setAudioMode, getAudioMode, type AudioMode } from '../utils/constants';
 import { bytesToString } from '../utils/helpers';
-import { detectSymbolWithThreshold, calculateSignalEnergy } from './detect';
-import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, getHeaderSize, getDataFrameSize } from './fec';
+import { calculateSignalEnergy } from './detect';
+import { detectToneSoft, softSymbolsToSoftBits, type SoftDetectionResult } from './soft-decision';
+import { decodeDataFEC, decodeHeaderFEC, decodeHeaderWithRedundancy, decodeHeaderFECSoft, decodeDataFECSoft, decodeHeaderWithRedundancySoft, getHeaderSize, getDataFrameSize } from './fec';
 import { parseHeaderFrame, parseDataFrame, FrameCollector, type HeaderInfo } from './deframe';
 import { processPayload, type ProcessResult } from './decompress';
-import { deinterleave, calculateInterleaverDepth } from '../encode/interleave';
+import { deinterleave, deinterleaveSoftBits, calculateInterleaverDepth } from '../encode/interleave';
 import { sha256Hex } from '../lib/sha256';
 import { ChirpDetector } from '../lib/chirp';
+import { FrequencyOffsetTracker } from './freq-offset';
 
 export type DecodeState =
   | 'idle'
@@ -87,7 +89,8 @@ export class Decoder {
   private phaseOffset: number; // Samples to offset for correct phase
 
   // Multi-phase symbol extraction
-  private phaseSymbols: number[][] = []; // Symbols for each phase
+  private phaseSymbols: number[][] = []; // Hard decisions for each phase (for pattern matching)
+  private phaseSoftSymbols: SoftDetectionResult[][] = []; // Soft results for FEC decoding
   private bestPhase = -1;
   private syncFoundAt = -1;
 
@@ -128,6 +131,19 @@ export class Decoder {
   private failedDataFrames: Set<number> = new Set(); // Track frames that failed FEC
   private static readonly SYMBOL_BUFFER_RATIO = 1.5; // Wait for 50% more symbols than expected before failing
 
+  // Salvage mode (relaxed thresholds, partial recovery)
+  private salvageMode = false;
+
+  // Frequency offset compensation (phone codec shifts)
+  private freqOffsetTracker: FrequencyOffsetTracker;
+  private estimatedFreqOffset: number = 0;
+
+  // Spectral interference compensation (constant background tones)
+  private toneBiases: Float32Array | null = null;
+
+  // Protocol mismatch detection
+  private suspectV2Protocol = false;
+
   // Performance throttling
   private patternSearchCounter = 0;
   private static readonly PATTERN_SEARCH_INTERVAL = 3; // Only search patterns every N audio chunks
@@ -160,9 +176,13 @@ export class Decoder {
     // Initialize chirp detector for robust preamble detection
     this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
 
-    // Initialize phase arrays
+    // Frequency offset tracker (phone codecs can shift tones by 50-100+ Hz)
+    this.freqOffsetTracker = new FrequencyOffsetTracker(200);
+
+    // Initialize phase arrays (hard + soft)
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
+      this.phaseSoftSymbols[p] = [];
     }
   }
 
@@ -184,6 +204,24 @@ export class Decoder {
    */
   setPassword(password: string): void {
     this.password = password;
+  }
+
+  /**
+   * Enable salvage mode for best-effort partial recovery
+   * Relaxes thresholds and enables partial frame output
+   */
+  setSalvageMode(enabled: boolean): void {
+    this.salvageMode = enabled;
+  }
+
+  /**
+   * Get effective guard samples for symbol analysis.
+   * In salvage mode, skip guard trimming entirely to maximize FFT window size.
+   * Normal: 2400 - 2*576 = 1248 samples (52%), 38.5 Hz/bin resolution
+   * Salvage: 2400 samples (100%), 20 Hz/bin resolution — matches analyzer behavior
+   */
+  private getEffectiveGuardSamples(): number {
+    return this.salvageMode ? 0 : this.guardSamples;
   }
 
   /**
@@ -269,9 +307,13 @@ export class Decoder {
     this.headerDecodedTime = 0;
     this.expectedEndTime = 0;
     this.lastHighEnergyTime = 0;
+    this.estimatedFreqOffset = 0;
+    this.freqOffsetTracker.reset();
+    this.toneBiases = null;
 
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
+      this.phaseSoftSymbols[p] = [];
     }
 
     this.updateProgress();
@@ -294,8 +336,9 @@ export class Decoder {
 
     // Check for timeouts (only after sync is detected)
     if (this.syncDetectedTime > 0) {
-      // Silence detection: if no significant audio for 4 seconds after sync
-      if (this.lastHighEnergyTime > 0 && (now - this.lastHighEnergyTime) > Decoder.SILENCE_TIMEOUT_MS) {
+      // Silence detection: if no significant audio for 4 seconds after sync (8s in salvage mode)
+      const silenceTimeout = this.salvageMode ? Decoder.SILENCE_TIMEOUT_MS * 2 : Decoder.SILENCE_TIMEOUT_MS;
+      if (this.lastHighEnergyTime > 0 && (now - this.lastHighEnergyTime) > silenceTimeout) {
         const silenceDuration = ((now - this.lastHighEnergyTime) / 1000).toFixed(1);
         console.log(`[Decoder] Silence timeout: ${silenceDuration}s of silence detected`);
         this.handleTimeoutError(`Transmission ended (${silenceDuration}s silence). No complete message received.`);
@@ -356,25 +399,39 @@ export class Decoder {
     }
 
     // Extract symbols for all phases
-    this.extractSymbolsAllPhases();
+    try {
+      this.extractSymbolsAllPhases();
+    } catch (err) {
+      console.error('[Decoder] extractSymbolsAllPhases error:', err);
+      this.lastDebugInfo = `Error: extractSymbols - ${err instanceof Error ? err.message : err}`;
+      this.updateProgress();
+      return;
+    }
 
     // Process based on state
-    if (this.bestPhase < 0) {
-      // Throttle pattern search to reduce CPU load during preamble detection
-      this.patternSearchCounter++;
-      if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
-        this.patternSearchCounter = 0;
-        // If chirp is detected, use precise timing; otherwise fall back to pattern search
-        if (this.chirpDetected && this.chirpEndSample > 0) {
-          this.findBestPhaseFromChirp();
-        } else {
-          this.findBestPhase();
+    try {
+      if (this.bestPhase < 0) {
+        // Throttle pattern search to reduce CPU load during preamble detection
+        this.patternSearchCounter++;
+        if (this.patternSearchCounter >= Decoder.PATTERN_SEARCH_INTERVAL) {
+          this.patternSearchCounter = 0;
+          // If chirp is detected, use precise timing first
+          if (this.chirpDetected && this.chirpEndSample > 0) {
+            this.findBestPhaseFromChirp();
+          }
+          // If chirp-based search didn't find sync (or no chirp), use exhaustive search
+          if (this.bestPhase < 0) {
+            this.findBestPhase();
+          }
         }
+      } else if (this.state === 'receiving_header') {
+        this.processHeader();
+      } else if (this.state === 'receiving_data') {
+        this.processDataFrame();
       }
-    } else if (this.state === 'receiving_header') {
-      this.processHeader();
-    } else if (this.state === 'receiving_data') {
-      this.processDataFrame();
+    } catch (err) {
+      console.error('[Decoder] Processing error:', err);
+      this.lastDebugInfo = `Error: processing - ${err instanceof Error ? err.message : err}`;
     }
 
     this.updateProgress();
@@ -404,9 +461,10 @@ export class Decoder {
         const symbolIndex = this.phaseSymbols[phase].length;
         const symbolStart = offset + symbolIndex * this.symbolSamples;
 
-        // Get samples for this symbol (skip guard intervals)
-        const analysisStart = symbolStart + this.guardSamples;
-        const analysisLength = this.symbolSamples - this.guardSamples * 2;
+        // Get samples for this symbol (skip guard intervals; salvage mode uses full window)
+        const guard = this.getEffectiveGuardSamples();
+        const analysisStart = symbolStart + guard;
+        const analysisLength = this.symbolSamples - guard * 2;
 
         // Check if we have enough samples
         if (analysisStart + analysisLength > this.totalSamplesReceived) break;
@@ -419,22 +477,58 @@ export class Decoder {
           console.warn('[Decoder] Buffer overflow! Symbol', symbolIndex, 'data was overwritten. Behind by',
             oldestValidSample - analysisStart, 'samples');
           this.phaseSymbols[phase].push(0); // Placeholder - will likely cause decode failure
+          // Push uncertain soft result to maintain alignment
+          const numTones = AUDIO.NUM_TONES || 4;
+          this.phaseSoftSymbols[phase].push({
+            softValues: new Uint8Array(numTones).fill(127),
+            hardDecision: 0,
+            confidence: 0,
+          });
           continue;
         }
 
         const symbolSamples = this.getBufferSamples(analysisStart, analysisLength);
-        const tone = detectSymbolWithThreshold(symbolSamples, this.sampleRate, 0.10);
 
-        if (tone >= 0) {
-          this.phaseSymbols[phase].push(tone);
+        // Use soft-decision detection: provides both hard decision for pattern
+        // matching and soft confidence values for Viterbi FEC decoding (~2-3 dB gain)
+        const softResult = detectToneSoft(symbolSamples, this.sampleRate, this.estimatedFreqOffset, this.toneBiases ?? undefined);
+        const confidenceThreshold = this.salvageMode ? 0.02 : 0.10;
+
+        // Store hard decision for pattern matching (findBestPhase, etc.)
+        if (softResult.confidence >= confidenceThreshold) {
+          this.phaseSymbols[phase].push(softResult.hardDecision);
         } else {
-          // Even if low confidence, we need to track position
-          // Use -1 as placeholder or detect anyway with lower threshold
-          const toneLow = detectSymbolWithThreshold(symbolSamples, this.sampleRate, 0.05);
-          this.phaseSymbols[phase].push(toneLow >= 0 ? toneLow : 0);
+          // Low confidence - still push hard decision to maintain alignment
+          this.phaseSymbols[phase].push(softResult.hardDecision);
         }
+
+        // Store soft result for FEC decoding (without magnitudes to save memory)
+        this.phaseSoftSymbols[phase].push({
+          softValues: softResult.softValues,
+          hardDecision: softResult.hardDecision,
+          confidence: softResult.confidence,
+        });
       }
     }
+  }
+
+  /**
+   * Extract soft bits for a slice of symbols (for soft-decision FEC decoding)
+   */
+  private extractSoftBitsForSlice(
+    phase: number,
+    startIndex: number,
+    symbolCount: number,
+    expectedBytes: number
+  ): number[] | null {
+    const softResults = this.phaseSoftSymbols[phase];
+    if (!softResults || softResults.length < startIndex + symbolCount) {
+      return null;
+    }
+    const slice = softResults.slice(startIndex, startIndex + symbolCount);
+    const softBits = softSymbolsToSoftBits(slice, AUDIO.BITS_PER_SYMBOL);
+    // Trim to expected byte boundary
+    return softBits.slice(0, expectedBytes * 8);
   }
 
   private getBufferSamples(startSample: number, length: number): Float32Array {
@@ -535,7 +629,8 @@ export class Decoder {
 
         const matchRatio = matchCount / fullPattern.length;
 
-        if (matchRatio >= 0.7) {  // 70% match threshold
+        const matchThreshold = this.salvageMode ? 0.50 : 0.70;
+        if (matchRatio >= matchThreshold) {  // Relaxed in salvage mode
           this.bestPhase = bestPhaseEstimate;
           this.syncFoundAt = startIdx + fullPattern.length;
           this.detectedAudioMode = mode;
@@ -624,7 +719,7 @@ export class Decoder {
           const syncPos = i + patternLen;
           if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          if (this.matchesPatternForMode(symbols, i, fullPattern, maxTone)) {
+          if (this.matchesPatternForMode(symbols, i, fullPattern, maxTone, this.salvageMode)) {
             this.bestPhase = phase;
             this.syncFoundAt = syncPos;
             this.state = 'receiving_header';
@@ -636,9 +731,7 @@ export class Decoder {
             setAudioMode(mode);
             this.updateSymbolTiming();
 
-            console.log('[Decoder] Found', mode, 'calibration+sync at phase', phase, 'index', i);
-            console.log('[Decoder] Pattern found:', symbols.slice(i, i + patternLen));
-            console.log('[Decoder] Expected:', fullPattern);
+            console.log(`[Decoder] Found ${mode} calibration+sync at phase ${phase} index ${i} (${symbols.slice(i, i + patternLen).join(',')})`);
             this.lastDebugInfo = `Sync found (${mode} mode)! Receiving header...`;
             return;
           }
@@ -657,7 +750,7 @@ export class Decoder {
           const syncPos = i + syncLen;
           if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          if (this.matchesSyncPatternForMode(symbols, i, maxTone, syncLen)) {
+          if (this.matchesSyncPatternForMode(symbols, i, maxTone, syncLen, this.salvageMode)) {
             if (symbols.length > syncPos + 12) {
               this.bestPhase = phase;
               this.syncFoundAt = syncPos;
@@ -680,38 +773,106 @@ export class Decoder {
     }
 
     // PASS 3: Try loose pattern (8 symbols with tolerance) - last resort
-    // Require extra buffer to ensure we've had time to detect any full pattern first
-    for (let phase = 0; phase < NUM_PHASES; phase++) {
-      const symbols = this.phaseSymbols[phase];
-      if (symbols.length < 20) continue;
+    // Skip in salvage mode: PASS 4's full 16-symbol best-match search is more reliable
+    // because the 8-symbol pattern has ambiguous alignment (calib[0] vs calib[4])
+    if (!this.salvageMode) {
+      for (let phase = 0; phase < NUM_PHASES; phase++) {
+        const symbols = this.phaseSymbols[phase];
+        if (symbols.length < 20) continue;
 
-      for (const { mode, maxTone } of modes) {
-        for (let i = 0; i <= symbols.length - 8; i++) {
-          const syncPos = i + 8;
-          if (this.isSyncPositionFailed(phase, syncPos)) continue;
+        for (const { mode, maxTone } of modes) {
+          for (let i = 0; i <= symbols.length - 8; i++) {
+            // The loose pattern [0,1,2,3,0,3,0,3] matches calib[4..7]+sync[0..3].
+            // After these 8 symbols, sync[4..7] (4 more symbols) remain before header.
+            const syncPos = i + 12;
+            if (this.isSyncPositionFailed(phase, syncPos)) continue;
 
-          // Require enough symbols that a full pattern at i-4 would have been detectable
-          // Full pattern at (i-4) needs symbols up to (i-4+16) = (i+12)
-          // This prevents matching a loose pattern before its containing full pattern is visible
-          if (symbols.length < i + 16) continue;
+            // Require enough symbols that a full pattern at i-4 would have been detectable
+            // Full pattern at (i-4) needs symbols up to (i-4+16) = (i+12)
+            // This prevents matching a loose pattern before its containing full pattern is visible
+            if (symbols.length < i + 16) continue;
 
-          if (this.matchesLoosePatternForMode(symbols, i, maxTone)) {
-            this.bestPhase = phase;
-            this.syncFoundAt = syncPos;
-            this.state = 'receiving_header';
-            this.detectedAudioMode = mode;
-            this.syncDetectedTime = Date.now();
-            this.lastHighEnergyTime = Date.now();  // Reset silence timer
+            if (this.matchesLoosePatternForMode(symbols, i, maxTone, this.salvageMode)) {
+              this.bestPhase = phase;
+              this.syncFoundAt = syncPos;
+              this.state = 'receiving_header';
+              this.detectedAudioMode = mode;
+              this.syncDetectedTime = Date.now();
+              this.lastHighEnergyTime = Date.now();  // Reset silence timer
 
-            setAudioMode(mode);
-            this.updateSymbolTiming();
+              setAudioMode(mode);
+              this.updateSymbolTiming();
 
-            console.log('[Decoder] Found', mode, 'loose pattern at phase', phase, 'index', i);
-            console.log('[Decoder] Pattern found:', symbols.slice(i, i + 8));
-            this.lastDebugInfo = `Sync found (${mode}, loose)!`;
-            return;
+              console.log(`[Decoder] Found ${mode} loose pattern at phase ${phase} index ${i} (${symbols.slice(i, i + 8).join(',')})`);
+              this.lastDebugInfo = `Sync found (${mode}, loose)!`;
+              return;
+            }
           }
         }
+      }
+    }
+
+    // PASS 4 (salvage only): Percentage-based pattern scan — like the analyzer
+    // Uses a lower threshold (60%) to find heavily distorted preambles
+    if (this.salvageMode) {
+      let bestMatch = { ratio: 0, phase: -1, syncPos: -1, mode: '' as AudioMode };
+
+      for (let phase = 0; phase < NUM_PHASES; phase++) {
+        const symbols = this.phaseSymbols[phase];
+        if (symbols.length < 20) continue;
+
+        for (const { mode, calib, sync, maxTone } of modes) {
+          const fullCalib: number[] = [];
+          for (let r = 0; r < calibRepeats; r++) {
+            fullCalib.push(...calib);
+          }
+          const fullPattern = [...fullCalib, ...sync];
+          const patternLen = fullPattern.length;
+          const tolerance = maxTone > 10 ? 2 : 1;
+
+          for (let i = 0; i <= symbols.length - patternLen; i++) {
+            const syncPos = i + patternLen;
+            if (this.isSyncPositionFailed(phase, syncPos)) continue;
+            if (symbols.length < syncPos + 12) continue; // Need some header symbols too
+
+            let matchCount = 0;
+            for (let j = 0; j < patternLen; j++) {
+              if (symbols[i + j] === fullPattern[j] ||
+                  Math.abs(symbols[i + j] - fullPattern[j]) <= tolerance) {
+                matchCount++;
+              }
+            }
+            const ratio = matchCount / patternLen;
+            if (ratio > bestMatch.ratio) {
+              bestMatch = { ratio, phase, syncPos, mode };
+            }
+          }
+        }
+      }
+
+      // Require enough symbols before accepting low-confidence matches.
+      // The preamble might be further into the audio, and with incremental feeding
+      // (100ms chunks), we might prematurely lock onto a false match before the real
+      // preamble has been fully extracted. Require 80 symbols (~4s) for matches <75%
+      // to ensure the full preamble region has been processed.
+      const minSymbolsForLowMatch = 80;
+      const maxPhaseSymbols = Math.max(...this.phaseSymbols.map(s => s.length));
+      const acceptThreshold = maxPhaseSymbols >= minSymbolsForLowMatch ? 0.60 : 0.80;
+
+      if (bestMatch.ratio >= acceptThreshold && bestMatch.phase >= 0) {
+        this.bestPhase = bestMatch.phase;
+        this.syncFoundAt = bestMatch.syncPos;
+        this.state = 'receiving_header';
+        this.detectedAudioMode = bestMatch.mode as AudioMode;
+        this.syncDetectedTime = Date.now();
+        this.lastHighEnergyTime = Date.now();
+
+        setAudioMode(bestMatch.mode as AudioMode);
+        this.updateSymbolTiming();
+
+        console.log(`[Decoder] Salvage: found ${bestMatch.mode} pattern at phase ${bestMatch.phase} syncPos ${bestMatch.syncPos} (${(bestMatch.ratio * 100).toFixed(0)}% match)`);
+        this.lastDebugInfo = `Sync found (${bestMatch.mode}, salvage ${(bestMatch.ratio * 100).toFixed(0)}%)!`;
+        return;
       }
     }
 
@@ -748,9 +909,10 @@ export class Decoder {
    * Clear symbols and reset for re-extraction with new timing
    */
   private clearSymbolsForReextraction(): void {
-    // Clear all phase symbol arrays
+    // Clear all phase symbol arrays (hard + soft)
     for (let p = 0; p < NUM_PHASES; p++) {
       this.phaseSymbols[p] = [];
+      this.phaseSoftSymbols[p] = [];
     }
     // Reset detection state
     this.bestPhase = -1;
@@ -762,9 +924,479 @@ export class Decoder {
   }
 
   /**
+   * Estimate frequency offset from calibration tones using the chirp end position.
+   * Calibration tones have known values, so we can measure how much the phone codec
+   * has shifted the frequencies and compensate during symbol detection.
+   */
+  private estimateFreqOffsetFromCalibration(): void {
+    const calibrationRepeats = AUDIO.CALIBRATION_REPEATS || 2;
+    const calibTones = AUDIO.CALIBRATION_TONES;
+    const calibSymbolCount = calibTones.length * calibrationRepeats;
+    const calibSampleCount = calibSymbolCount * this.symbolSamples;
+
+    let calibStartSample: number;
+
+    if (this.chirpEndSample > 0) {
+      // Method 1: Use chirp end position (most accurate)
+      calibStartSample = this.chirpEndSample;
+    } else if (this.syncFoundAt >= 0 && this.bestPhase >= 0) {
+      // Method 2: Derive from sync position
+      // syncFoundAt = first header symbol index
+      // Calibration is calibSymbolCount symbols before sync pattern (8 sync symbols)
+      const syncLen = AUDIO.SYNC_PATTERN.length;
+      const calibSymbolIdx = this.syncFoundAt - syncLen - calibSymbolCount;
+      if (calibSymbolIdx < 0) return;
+      calibStartSample = this.bestPhase * this.phaseOffset + calibSymbolIdx * this.symbolSamples;
+    } else {
+      return;
+    }
+
+    if (calibStartSample + calibSampleCount > this.totalSamplesReceived) return;
+    if (calibStartSample < 0) return;
+
+    const calibSamples = this.getBufferSamples(calibStartSample, calibSampleCount);
+
+    // Build expected tone sequence: [0,1,2,3, 0,1,2,3] for phone
+    const expectedTones: number[] = [];
+    for (let r = 0; r < calibrationRepeats; r++) {
+      expectedTones.push(...calibTones);
+    }
+
+    const result = this.freqOffsetTracker.estimateOffset(
+      calibSamples, this.sampleRate, expectedTones, this.symbolSamples
+    );
+
+    this.estimatedFreqOffset = result.offsetHz;
+    console.log(`[Decoder] Frequency offset: ${result.offsetHz.toFixed(1)} Hz (confidence: ${(result.confidence * 100).toFixed(0)}%)`);
+    if (result.measurements.length > 0) {
+      for (const m of result.measurements) {
+        console.log(`[Decoder]   Tone ${m.expectedHz}Hz -> measured ${m.measuredHz.toFixed(0)}Hz (${m.errorHz >= 0 ? '+' : ''}${m.errorHz.toFixed(0)}Hz)`);
+      }
+    }
+
+    // If significant offset detected, re-extract symbols from sync position onward
+    this.reextractWithOffset();
+  }
+
+
+  /**
+   * Re-extract symbols from sync position onward with the estimated frequency offset.
+   * Called after frequency offset is estimated from calibration tones.
+   */
+  private reextractWithOffset(): void {
+    if (Math.abs(this.estimatedFreqOffset) < 5) return; // No significant offset
+
+    console.log(`[Decoder] Re-extracting symbols with offset ${this.estimatedFreqOffset.toFixed(1)} Hz`);
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (this.phaseSymbols[p].length > this.syncFoundAt) {
+        this.phaseSymbols[p] = this.phaseSymbols[p].slice(0, this.syncFoundAt);
+        this.phaseSoftSymbols[p] = this.phaseSoftSymbols[p].slice(0, this.syncFoundAt);
+      }
+    }
+    // Re-extraction happens naturally in the next extractSymbolsAllPhases() call
+    // since phaseSymbols.length < symbolsExpected, using the now-set estimatedFreqOffset
+  }
+
+  /**
+   * Estimate per-tone interference levels from global audio analysis.
+   *
+   * Scans symbols across the entire audio and measures the MINIMUM magnitude
+   * of each tone. A constant interfering frequency (e.g., 1800 Hz from codec
+   * artifacts or speaker resonance) will have a high minimum because it never
+   * drops to zero, unlike legitimate signal tones which are only present when
+   * that specific tone is being transmitted.
+   *
+   * This approach is position-independent — it doesn't need the correct
+   * calibration position to detect interference.
+   *
+   * Returns true if significant interference was detected and biases were set.
+   */
+  private estimateToneBiases(): boolean {
+    const phase = this.bestPhase >= 0 ? this.bestPhase : 0;
+    const offset = phase * this.phaseOffset;
+    const numTones = AUDIO.NUM_TONES || 4;
+
+    // Sample symbols near the sync position (where we know there's signal)
+    // Use a window centered around syncFoundAt, extending backwards and forwards
+    const syncIdx = this.syncFoundAt >= 0 ? this.syncFoundAt : 0;
+    const totalSymbols = Math.floor((this.totalSamplesReceived - offset) / this.symbolSamples);
+    // Start from 20 symbols before sync (in the calibration/preamble region) to well into the data
+    const sampleStart = Math.max(0, syncIdx - 20);
+    const sampleEnd = Math.min(totalSymbols, syncIdx + 200);
+    const numAvailable = sampleEnd - sampleStart;
+    const numToSample = Math.min(50, numAvailable);
+    if (numToSample < 10) return false;
+
+    // For each tone, measure its average magnitude when it's NOT the hard decision
+    // (i.e., when another tone won). This isolates the interference baseline.
+    const step = Math.max(1, Math.floor(numAvailable / numToSample));
+    const noiseSums = new Float32Array(numTones);
+    const noiseCounts = new Float32Array(numTones);
+    let validCount = 0;
+
+    const biasGuard = this.getEffectiveGuardSamples();
+    for (let idx = sampleStart; idx < sampleEnd && validCount < numToSample; idx += step) {
+      const symbolStart = offset + idx * this.symbolSamples;
+      const analysisStart = symbolStart + biasGuard;
+      const analysisLength = this.symbolSamples - biasGuard * 2;
+
+      if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+      const samples = this.getBufferSamples(analysisStart, analysisLength);
+      const result = detectToneSoft(samples, this.sampleRate, this.estimatedFreqOffset);
+      if (!result.magnitudes) continue;
+
+      // Skip very low energy symbols (silence/noise)
+      const maxMag = Math.max(...result.magnitudes);
+      if (maxMag < 3) continue;
+
+      const winner = result.hardDecision;
+      for (let t = 0; t < numTones; t++) {
+        if (t !== winner) {
+          noiseSums[t] += result.magnitudes[t];
+          noiseCounts[t] += 1;
+        }
+      }
+      validCount++;
+    }
+
+    if (validCount < 5) {
+      console.log(`[Decoder] Tone bias: insufficient samples (${validCount})`);
+      return false;
+    }
+
+    // Compute average "background" magnitude per tone
+    const avgNoise = new Float32Array(numTones);
+    for (let t = 0; t < numTones; t++) {
+      avgNoise[t] = noiseCounts[t] > 0 ? noiseSums[t] / noiseCounts[t] : 0;
+    }
+
+    // Find tone with highest average noise (constant interference)
+    let maxNoise = 0;
+    let maxIdx = -1;
+    for (let t = 0; t < numTones; t++) {
+      if (avgNoise[t] > maxNoise) {
+        maxNoise = avgNoise[t];
+        maxIdx = t;
+      }
+    }
+
+    // Compare against other tones' average noise
+    let otherSum = 0;
+    let otherCount = 0;
+    for (let t = 0; t < numTones; t++) {
+      if (t !== maxIdx) {
+        otherSum += avgNoise[t];
+        otherCount++;
+      }
+    }
+    const otherAvg = otherCount > 0 ? otherSum / otherCount : 0;
+
+    if (maxNoise < otherAvg * 1.3 || maxNoise < 3) {
+      return false;
+    }
+
+    // Use full average noise as bias for spectral whitening (division-based)
+    const biases = new Float32Array(numTones);
+    for (let t = 0; t < numTones; t++) {
+      biases[t] = avgNoise[t];
+    }
+
+    this.toneBiases = biases;
+    console.log(`[Decoder] Spectral interference: tone ${maxIdx} noise ${maxNoise.toFixed(1)} (${(maxNoise/otherAvg).toFixed(1)}x others)`);
+
+    return true;
+  }
+
+  /**
+   * Frequency sweep header decode: try different frequency offsets to recover
+   * the header. Used in salvage mode when standard decoding fails.
+   * Sweeps -100 to +100 Hz in 10 Hz steps, re-extracting symbols from raw audio
+   * at each offset and attempting FEC decode.
+   */
+  private frequencySweepHeaderDecode(headerBytes: number, headerSymbols: number): boolean {
+    if (this.bestPhase < 0 || this.syncFoundAt < 0) return false;
+
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+    const sweepOffsets: number[] = [];
+    for (let freqOff = -100; freqOff <= 100; freqOff += 10) {
+      // Skip offsets close to what we've already tried
+      if (Math.abs(freqOff - this.estimatedFreqOffset) < 8) continue;
+      sweepOffsets.push(freqOff);
+    }
+
+    console.log(`[Decoder] Salvage: frequency sweep (${sweepOffsets.length} offsets, -100 to +100 Hz)...`);
+
+    for (const freqOff of sweepOffsets) {
+      // Try best phase first, then others
+      const phasesToTry = [this.bestPhase];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        if (p !== this.bestPhase) phasesToTry.push(p);
+      }
+
+      for (const phase of phasesToTry) {
+        // Extract header symbols with this frequency offset
+        const softResults = this.extractSymbolsWithOffset(
+          phase, this.syncFoundAt, headerSymbols, freqOff
+        );
+        if (softResults.length < headerSymbols) continue;
+
+        const softBits = softSymbolsToSoftBits(softResults, AUDIO.BITS_PER_SYMBOL)
+          .slice(0, headerBytes * 8);
+        const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, headerBytes);
+
+        // Try soft FEC decode
+        const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+        if (softResult.success) {
+          const header = parseHeaderFrame(softResult.data);
+          if (header && header.crcValid) {
+            console.log(`[Decoder] Salvage: header recovered at freq offset ${freqOff} Hz, phase ${phase}`);
+            this.headerInfo = header;
+            this.headerRepeated = header.totalFrames > 1;
+            this.frameCollector.setHeader(header);
+            this.totalErrorsFixed += Math.max(0, softResult.correctedErrors);
+            this.consecutiveHeaderFailures = 0;
+
+            // Adopt this frequency offset for all future symbol extraction
+            this.estimatedFreqOffset = freqOff;
+            this.reextractWithOffset();
+
+            if (phase !== this.bestPhase) {
+              this.bestPhase = phase;
+            }
+
+            this.headerDecodedTime = Date.now();
+            this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+            this.state = 'receiving_data';
+            this.lastDebugInfo = `Header recovered (freq sweep ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+            return true;
+          }
+        }
+
+        // Also try with redundancy combining (second header copy)
+        const symbols2Start = this.syncFoundAt + headerSymbols;
+        const softResults2 = this.extractSymbolsWithOffset(
+          phase, symbols2Start, headerSymbols, freqOff
+        );
+        if (softResults2.length >= headerSymbols) {
+          const softBits2 = softSymbolsToSoftBits(softResults2, AUDIO.BITS_PER_SYMBOL)
+            .slice(0, headerBytes * 8);
+          const deinterleavedSoft2 = deinterleaveSoftBits(softBits2, interleaverDepth, headerBytes);
+          const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+          if (redundantResult.success) {
+            const header = parseHeaderFrame(redundantResult.data);
+            if (header && header.crcValid) {
+              console.log(`[Decoder] Salvage: header recovered (redundant) at freq offset ${freqOff} Hz`);
+              this.headerInfo = header;
+              this.headerRepeated = header.totalFrames > 1;
+              this.frameCollector.setHeader(header);
+              this.totalErrorsFixed += Math.max(0, redundantResult.correctedErrors);
+              this.consecutiveHeaderFailures = 0;
+
+              this.estimatedFreqOffset = freqOff;
+              this.reextractWithOffset();
+
+              if (phase !== this.bestPhase) {
+                this.bestPhase = phase;
+              }
+
+              this.headerDecodedTime = Date.now();
+              this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+              this.state = 'receiving_data';
+              this.lastDebugInfo = `Header recovered (freq sweep ${freqOff >= 0 ? '+' : ''}${freqOff} Hz, redundant)`;
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    console.log('[Decoder] Salvage: frequency sweep failed');
+    return false;
+  }
+
+  /**
+   * Brute-force header recovery in salvage mode.
+   *
+   * When FEC fails, we still have best-effort decoded bytes. Since we know:
+   * - Bytes 0-1 MUST be [0x4E, 0x33] ("N3")
+   * - Byte 2 high nibble MUST be 0x3 (version 3)
+   * - Byte 2 low nibble is flags (0x00-0x07)
+   * - Bytes 10-11 are CRC16 of bytes 0-9
+   *
+   * We fix the known bytes and try single-byte corrections on the remaining
+   * 7 bytes (3-9), checking CRC16 for each candidate.
+   */
+  private bruteForceHeaderRecovery(headerBytes: number, headerSymbols: number): boolean {
+    if (this.bestPhase < 0 || this.syncFoundAt < 0) return false;
+
+    console.log('[Decoder] Salvage: brute-force header recovery...');
+
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+
+    // Collect FEC-failed header candidates from all phases/offsets
+    const candidates: Uint8Array[] = [];
+    const offsets = [0, -1, 1, -2, 2];
+    const phasesToTry = [this.bestPhase];
+    for (let p = 0; p < NUM_PHASES; p++) {
+      if (p !== this.bestPhase) phasesToTry.push(p);
+    }
+
+    for (const phase of phasesToTry) {
+      for (const offset of offsets) {
+        const headerStart = this.syncFoundAt + offset;
+        if (headerStart < 0 || headerStart + headerSymbols > this.phaseSymbols[phase].length) continue;
+
+        // Soft decode attempt - get best-effort bytes
+        const softBits = this.extractSoftBitsForSlice(phase, headerStart, headerSymbols, headerBytes);
+        if (softBits) {
+          const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, headerBytes);
+          const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+          if (softResult.data.length >= 12) {
+            candidates.push(new Uint8Array(softResult.data));
+          }
+        }
+
+        // Hard decode attempt
+        const symbols = this.phaseSymbols[phase];
+        const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
+        const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
+        const bytes = deinterleave(bytesRaw, interleaverDepth, headerBytes);
+        const hardResult = decodeHeaderFEC(bytes);
+        if (hardResult.data.length >= 12) {
+          candidates.push(new Uint8Array(hardResult.data));
+        }
+      }
+    }
+
+    if (candidates.length === 0) return false;
+
+    console.log(`[Decoder] Salvage: trying brute-force on ${candidates.length} header candidates`);
+
+    // For each candidate, fix known bytes and try CRC
+    for (const candidate of candidates) {
+      // Fix known bytes
+      candidate[0] = 0x4E; // 'N'
+      candidate[1] = 0x33; // '3'
+
+      // Try all valid flag combinations (8 options)
+      for (let flags = 0; flags <= 0x07; flags++) {
+        candidate[2] = 0x30 | flags; // version 3 + flags
+
+        // Check CRC with known bytes fixed (no other corrections)
+        const header = parseHeaderFrame(candidate);
+        if (header && header.crcValid && this.isPlausibleHeader(header)) {
+          console.log(`[Decoder] Salvage: header recovered via brute-force (flags=${flags})`);
+          return this.acceptBruteForceHeader(header);
+        }
+
+        // Try single-byte corrections on bytes 3-7 (data fields, NOT session ID or CRC)
+        // Bytes 8-9 (session ID) and 10-11 (CRC) are excluded because:
+        // - Changing session ID easily creates false CRC matches
+        // - CRC bytes are validated, not corrected
+        for (let byteIdx = 3; byteIdx <= 7; byteIdx++) {
+          const originalByte = candidate[byteIdx];
+          for (let val = 0; val < 256; val++) {
+            if (val === originalByte) continue;
+            candidate[byteIdx] = val;
+            const h = parseHeaderFrame(candidate);
+            if (h && h.crcValid && this.isPlausibleHeader(h)) {
+              console.log(`[Decoder] Salvage: header recovered via brute-force (fixed byte ${byteIdx}: ${originalByte}->${val})`);
+              return this.acceptBruteForceHeader(h);
+            }
+          }
+          candidate[byteIdx] = originalByte; // Restore
+        }
+      }
+    }
+
+    console.log('[Decoder] Salvage: brute-force failed');
+    return false;
+  }
+
+  /**
+   * Check if a recovered header has plausible values for the audio we have.
+   */
+  private isPlausibleHeader(header: HeaderInfo): boolean {
+    // Basic range checks
+    if (header.totalFrames < 1 || header.totalFrames > 100) return false;
+    if (header.payloadLength < 1 || header.payloadLength > 50000) return false;
+    if (header.originalLength < 1 || header.originalLength > 100000) return false;
+
+    // Original size should be >= payload size (unless encrypted which adds overhead)
+    if (!header.encrypted && header.originalLength < header.payloadLength) return false;
+
+    // If compressed, original should typically be larger than payload
+    // (but not always, so don't enforce strictly)
+
+    // Check that frame count is consistent with payload size
+    // Each frame carries ~FRAME_V3.PAYLOAD_SIZE bytes, so totalFrames should be
+    // roughly payloadLength / frameSize (within 2x tolerance)
+    const estimatedFrames = Math.ceil(header.payloadLength / FRAME_V3.PAYLOAD_SIZE);
+    if (header.totalFrames > estimatedFrames * 2 + 1) return false;
+    if (header.totalFrames < Math.ceil(estimatedFrames / 3)) return false;
+
+    // Check against audio duration — we can estimate max possible data from audio length
+    // Each symbol takes AUDIO.SYMBOL_DURATION_MS ms, and we have a finite number of symbols
+    const symbolsAvailable = this.phaseSymbols[this.bestPhase >= 0 ? this.bestPhase : 0].length;
+    const headerSymbolCount = this.calculateSymbolsForBytes(getHeaderSize()) * (header.totalFrames > 1 ? 2 : 1);
+    const dataSymbolsAvailable = symbolsAvailable - (this.syncFoundAt >= 0 ? this.syncFoundAt : 0) - headerSymbolCount;
+    if (dataSymbolsAvailable < 10) return false; // Not enough data symbols
+
+    // Check that data frames actually fit in available audio
+    // Each data frame needs: (3 + PAYLOAD_SIZE + RS_PARITY_SIZE) bytes worth of symbols
+    const dataFrameBytes = getDataFrameSize(FRAME_V3.PAYLOAD_SIZE);
+    const symbolsPerFrame = this.calculateSymbolsForBytes(dataFrameBytes);
+    const totalDataSymbolsNeeded = header.totalFrames * symbolsPerFrame;
+    if (totalDataSymbolsNeeded > dataSymbolsAvailable * 1.5) return false; // Allow 50% slack for timing drift
+
+    return true;
+  }
+
+  private acceptBruteForceHeader(header: HeaderInfo): boolean {
+    this.headerInfo = header;
+    this.headerRepeated = header.totalFrames > 1;
+    this.frameCollector.setHeader(header);
+    this.consecutiveHeaderFailures = 0;
+    this.headerDecodedTime = Date.now();
+    this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+    this.state = 'receiving_data';
+    this.lastDebugInfo = `Header recovered (brute-force)! Frames: ${header.totalFrames}, Size: ${header.originalLength}`;
+    console.log('[Decoder] Header valid (brute-force)! Expecting', header.totalFrames, 'frames');
+    return true;
+  }
+
+  /**
+   * Extract symbols from raw audio at a specific frequency offset.
+   * Used by salvage mode frequency sweep to try different offsets without
+   * modifying the main symbol arrays.
+   */
+  private extractSymbolsWithOffset(
+    phase: number, startIdx: number, count: number, freqOffset: number
+  ): SoftDetectionResult[] {
+    const results: SoftDetectionResult[] = [];
+    const offset = phase * this.phaseOffset;
+    const biases = this.toneBiases ?? undefined;
+
+    const offsetGuard = this.getEffectiveGuardSamples();
+    for (let i = 0; i < count; i++) {
+      const symbolStart = offset + (startIdx + i) * this.symbolSamples;
+      const analysisStart = symbolStart + offsetGuard;
+      const analysisLength = this.symbolSamples - offsetGuard * 2;
+
+      if (analysisStart + analysisLength > this.totalSamplesReceived) break;
+
+      const samples = this.getBufferSamples(analysisStart, analysisLength);
+      results.push(detectToneSoft(samples, this.sampleRate, freqOffset, biases));
+    }
+
+    return results;
+  }
+
+  /**
    * Pattern matching for specific mode
    */
-  private matchesPatternForMode(symbols: number[], startIndex: number, pattern: number[], maxTone: number): boolean {
+  private matchesPatternForMode(symbols: number[], startIndex: number, pattern: number[], maxTone: number, salvage = false): boolean {
     let matches = 0;
     const tolerance = maxTone > 10 ? 2 : 1; // Larger tolerance for wideband (16 tones)
 
@@ -775,7 +1407,9 @@ export class Decoder {
         matches += 0.5; // Partial match for adjacent tones
       }
     }
-    return matches >= pattern.length - 1; // Allow 1 mismatch
+    // Normal: allow 1 mismatch (94%). Salvage: allow ~25% mismatch (75%)
+    const threshold = salvage ? pattern.length * 0.75 : pattern.length - 1;
+    return matches >= threshold;
   }
 
   /**
@@ -783,10 +1417,13 @@ export class Decoder {
    * Sync: [low, high, low, high, ...] alternating pattern
    * Made stricter to avoid false positives
    */
-  private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8): boolean {
+  private matchesSyncPatternForMode(symbols: number[], startIndex: number, maxTone: number, syncLen: number = 8, salvage = false): boolean {
     // Phone mode (4 tones): require exact 8/8 match - less margin for error
     // Wideband mode (16 tones): allow 7/8 - more tones means more potential drift
-    const minMatch = maxTone > 10 ? syncLen - 1 : syncLen;
+    // Salvage mode: allow 6/8 for phone, 5/8 for wideband
+    const minMatch = salvage
+      ? (maxTone > 10 ? syncLen - 3 : syncLen - 2)
+      : (maxTone > 10 ? syncLen - 1 : syncLen);
 
     let matches = 0;
     for (let i = 0; i < Math.min(syncLen, symbols.length - startIndex); i++) {
@@ -810,7 +1447,7 @@ export class Decoder {
    * Works for both phone (8 tones) and wideband (16 tones)
    * Phone mode is stricter since we have fewer tones
    */
-  private matchesLoosePatternForMode(symbols: number[], startIndex: number, maxTone: number): boolean {
+  private matchesLoosePatternForMode(symbols: number[], startIndex: number, maxTone: number, salvage = false): boolean {
     const s = symbols.slice(startIndex, startIndex + 8);
     if (s.length < 8) return false;
 
@@ -819,6 +1456,15 @@ export class Decoder {
     const isPhoneMode = maxTone <= 7;
 
     if (isPhoneMode) {
+      if (salvage) {
+        // Salvage: count matches with ±1 tolerance, require 6/8
+        let matches = 0;
+        const expected = [0, 1, 2, 3, 0, maxTone, 0, maxTone];
+        for (let i = 0; i < 8; i++) {
+          if (s[i] === expected[i] || Math.abs(s[i] - expected[i]) <= 1) matches++;
+        }
+        return matches >= 6;
+      }
       // Phone mode: exact calibration match required
       const calibOk = s[0] === 0 && s[1] === 1 && s[2] === 2 && s[3] === 3;
       // Phone mode: exact sync match required (alternating 0 and maxTone)
@@ -830,7 +1476,7 @@ export class Decoder {
     // Wideband mode: allow tolerance
     const quarter = Math.floor(maxTone / 4);
     const threeQuarter = Math.floor((maxTone * 3) / 4);
-    const tolerance = 2;
+    const tolerance = salvage ? 3 : 2;
 
     // Check calibration part (first 4 symbols should be: low, ~quarter, ~3/4, high)
     const calibOk = s[0] <= tolerance &&
@@ -907,17 +1553,41 @@ export class Decoder {
       return null;
     }
 
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+
+    // === SOFT-DECISION PATH (try first for ~2-3 dB gain) ===
+    const softBits = this.extractSoftBitsForSlice(phase, headerStart, headerSymbols, headerBytes);
+    if (softBits) {
+      const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, headerBytes);
+      const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+      if (softResult.success) {
+        const header = parseHeaderFrame(softResult.data);
+        if (header && header.crcValid) {
+          return { header, correctedErrors: softResult.correctedErrors, redundant: false };
+        }
+      }
+
+      // Try soft redundant copy
+      const symbols2Start = headerStart + headerSymbols;
+      const softBits2 = this.extractSoftBitsForSlice(phase, symbols2Start, headerSymbols, headerBytes);
+      if (softBits2) {
+        const deinterleavedSoft2 = deinterleaveSoftBits(softBits2, interleaverDepth, headerBytes);
+        const softRedundant = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+        if (softRedundant.success) {
+          const header = parseHeaderFrame(softRedundant.data);
+          if (header && header.crcValid) {
+            return { header, correctedErrors: softRedundant.correctedErrors, redundant: true };
+          }
+        }
+      }
+    }
+
+    // === HARD-DECISION FALLBACK ===
     const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
     const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
-    const bytes = deinterleave(
-      bytesRaw,
-      calculateInterleaverDepth(headerBytes),
-      headerBytes
-    );
+    const bytes = deinterleave(bytesRaw, interleaverDepth, headerBytes);
 
-    // Try primary decode
     let decodeResult = decodeHeaderFEC(bytes);
-
     if (decodeResult.success) {
       const header = parseHeaderFrame(decodeResult.data);
       if (header && header.crcValid) {
@@ -925,16 +1595,12 @@ export class Decoder {
       }
     }
 
-    // Try with redundant copy if available
+    // Try hard redundant copy
     const symbols2Start = headerStart + headerSymbols;
     if (symbols2Start + headerSymbols <= symbols.length) {
       const symbols2Arr = symbols.slice(symbols2Start, symbols2Start + headerSymbols);
       const bytes2Raw = this.symbolsToBytes(symbols2Arr, headerBytes);
-      const bytes2 = deinterleave(
-        bytes2Raw,
-        calculateInterleaverDepth(headerBytes),
-        headerBytes
-      );
+      const bytes2 = deinterleave(bytes2Raw, interleaverDepth, headerBytes);
 
       const decodeResult2 = decodeHeaderWithRedundancy(bytes, bytes2);
       if (decodeResult2.success) {
@@ -946,6 +1612,106 @@ export class Decoder {
     }
 
     return null;
+  }
+
+  /**
+   * Try header decode by combining soft bits from multiple phases.
+   * Different phases sample the symbol at different timing offsets within the symbol period,
+   * providing partially independent measurements. Averaging improves SNR (~3-6 dB for 4 phases).
+   */
+  private tryHeaderMultiPhaseCombined(
+    headerBytes: number,
+    headerSymbols: number
+  ): { header: HeaderInfo; correctedErrors: number } | null {
+    const offsets = [0, -1, 1, -2, 2];
+    const interleaverDepth = calculateInterleaverDepth(headerBytes);
+
+    for (const offset of offsets) {
+      const headerStart = this.syncFoundAt + offset;
+
+      // Collect soft bits from all available phases
+      const allPhaseSoftBits: number[][] = [];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        const softBits = this.extractSoftBitsForSlice(p, headerStart, headerSymbols, headerBytes);
+        if (softBits) {
+          allPhaseSoftBits.push(softBits);
+        }
+      }
+
+      if (allPhaseSoftBits.length < 2) continue;
+
+      // Average soft bits across phases
+      const combined: number[] = new Array(allPhaseSoftBits[0].length);
+      for (let i = 0; i < combined.length; i++) {
+        let sum = 0;
+        for (const phaseBits of allPhaseSoftBits) {
+          sum += phaseBits[i];
+        }
+        combined[i] = sum / allPhaseSoftBits.length;
+      }
+
+      const deinterleavedSoft = deinterleaveSoftBits(combined, interleaverDepth, headerBytes);
+      const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+      if (softResult.success) {
+        const header = parseHeaderFrame(softResult.data);
+        if (header && header.crcValid) {
+          console.log(`[Decoder] Header recovered via multi-phase combining (${allPhaseSoftBits.length} phases, offset=${offset})`);
+          return { header, correctedErrors: softResult.correctedErrors };
+        }
+      }
+
+      // Also try redundant copy combining
+      const symbols2Start = headerStart + headerSymbols;
+      const allPhase2SoftBits: number[][] = [];
+      for (let p = 0; p < NUM_PHASES; p++) {
+        const softBits2 = this.extractSoftBitsForSlice(p, symbols2Start, headerSymbols, headerBytes);
+        if (softBits2) {
+          allPhase2SoftBits.push(softBits2);
+        }
+      }
+
+      if (allPhase2SoftBits.length >= 2) {
+        const combined2: number[] = new Array(allPhase2SoftBits[0].length);
+        for (let i = 0; i < combined2.length; i++) {
+          let sum = 0;
+          for (const phaseBits of allPhase2SoftBits) {
+            sum += phaseBits[i];
+          }
+          combined2[i] = sum / allPhase2SoftBits.length;
+        }
+
+        const deinterleavedSoft2 = deinterleaveSoftBits(combined2, interleaverDepth, headerBytes);
+        const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+        if (redundantResult.success) {
+          const header = parseHeaderFrame(redundantResult.data);
+          if (header && header.crcValid) {
+            console.log(`[Decoder] Header recovered via multi-phase combining + redundancy (offset=${offset})`);
+            return { header, correctedErrors: redundantResult.correctedErrors };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate average soft confidence for a range of symbols.
+   * Used for diagnostic comparison of preamble vs header signal quality.
+   */
+  private averageSoftConfidence(phase: number, startIndex: number, count: number): number {
+    const softResults = this.phaseSoftSymbols[phase];
+    if (!softResults || startIndex < 0) return 0;
+
+    const start = Math.max(0, startIndex);
+    const end = Math.min(softResults.length, start + count);
+    if (end <= start) return 0;
+
+    let sum = 0;
+    for (let i = start; i < end; i++) {
+      sum += softResults[i].confidence;
+    }
+    return sum / (end - start);
   }
 
   private processHeader(): void {
@@ -965,9 +1731,17 @@ export class Decoder {
 
     console.log('[Decoder] Got enough symbols for header...');
 
+    // Estimate frequency offset from calibration tones (only on first attempt)
+    if (this.consecutiveHeaderFailures === 0 && this.estimatedFreqOffset === 0) {
+      this.estimateFreqOffsetFromCalibration();
+    }
+
     // Try header extraction with offset retries
     // First try the detected position, then ±1, ±2 symbol offsets
-    const offsets = [0, -1, 1, -2, 2];
+    // In salvage mode, try wider range ±5
+    const offsets = this.salvageMode
+      ? [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5]
+      : [0, -1, 1, -2, 2];
 
     // Also try different phases if the primary phase fails
     const phasesToTry = [this.bestPhase];
@@ -1010,10 +1784,29 @@ export class Decoder {
       }
     }
 
-    // Log what we tried (for debugging)
+    // === MULTI-PHASE SOFT COMBINING ===
+    // When individual phases fail, try averaging soft bits from all phases.
+    // Different phases sample the symbol at different timing offsets,
+    // providing partially independent measurements (~3-6 dB SNR gain).
+    {
+      const combineResult = this.tryHeaderMultiPhaseCombined(headerBytes, headerSymbols);
+      if (combineResult) {
+        this.headerInfo = combineResult.header;
+        this.headerRepeated = combineResult.header.totalFrames > 1;
+        this.frameCollector.setHeader(combineResult.header);
+        this.totalErrorsFixed += Math.max(0, combineResult.correctedErrors);
+        this.consecutiveHeaderFailures = 0;
+        this.headerDecodedTime = Date.now();
+        this.expectedEndTime = this.calculateExpectedEndTime(combineResult.header.totalFrames);
+        this.state = 'receiving_data';
+        this.lastDebugInfo = `Header OK (multi-phase)! Frames: ${combineResult.header.totalFrames}, Size: ${combineResult.header.originalLength}`;
+        return;
+      }
+    }
+
+    // Fallback: try direct FEC on best-phase symbols without offset retries
     const headerStart = this.syncFoundAt;
     const headerSymbolsArr = symbols.slice(headerStart, headerStart + headerSymbols);
-    console.log('[Decoder] Header symbols (first 20):', headerSymbolsArr.slice(0, 20));
 
     const bytesRaw = this.symbolsToBytes(headerSymbolsArr, headerBytes);
     const bytes = deinterleave(
@@ -1021,8 +1814,6 @@ export class Decoder {
       calculateInterleaverDepth(headerBytes),
       headerBytes
     );
-    console.log('[Decoder] Header bytes (first 10):', Array.from(bytes.slice(0, 10)));
-    console.log('[Decoder] Expected: [78, 51, ...] = "N3" magic (v3 protocol)');
 
     // Try to decode header
     let decodeResult = decodeHeaderFEC(bytes);
@@ -1075,8 +1866,6 @@ export class Decoder {
         console.log('[Decoder] Header invalid:', reason);
       }
     } else {
-      console.log('[Decoder] Header FEC decode failed');
-
       // If we have enough for second copy, try with redundancy
       if (symbolsAfterSync >= headerSymbols * 2) {
         const symbols2Start = headerStart + headerSymbols;
@@ -1113,11 +1902,154 @@ export class Decoder {
       }
     }
 
-    console.log('[Decoder] Header FEC decode failed after trying', offsets.length * phasesToTry.length, 'combinations');
+    // Diagnostic: show Viterbi best-effort decoded bytes and signal quality comparison
+    const softBitsForDiag = this.extractSoftBitsForSlice(this.bestPhase, this.syncFoundAt, headerSymbols, headerBytes);
+    let diagBytesStr = '?';
+    if (softBitsForDiag) {
+      const deintSoft = deinterleaveSoftBits(softBitsForDiag, calculateInterleaverDepth(headerBytes), headerBytes);
+      const diagResult = decodeHeaderFECSoft(deintSoft);
+      if (diagResult.data.length > 0) {
+        diagBytesStr = `[${Array.from(diagResult.data.slice(0, 4))}]`;
+      } else {
+        // Fallback to raw coded bytes
+        const headerSymbolsArr2 = symbols.slice(headerStart, headerStart + headerSymbols);
+        const bytesForLog = deinterleave(
+          this.symbolsToBytes(headerSymbolsArr2, headerBytes),
+          calculateInterleaverDepth(headerBytes),
+          headerBytes
+        );
+        diagBytesStr = `[${Array.from(bytesForLog.slice(0, 4))}] (coded)`;
+      }
+
+    }
+    const preambleConf = this.averageSoftConfidence(this.bestPhase, this.syncFoundAt - 16, 16);
+    const headerConf = this.averageSoftConfidence(this.bestPhase, this.syncFoundAt, Math.min(headerSymbols, 50));
+    console.log(`[Decoder] Header decode failed (${offsets.length * phasesToTry.length} combinations tried). Bytes[0..3]: ${diagBytesStr} (expected [78, 51, ...])`);
+    console.log(`[Decoder] Signal quality: preamble ${(preambleConf * 100).toFixed(0)}% → header ${(headerConf * 100).toFixed(0)}% confidence`);
+
+    // Detect v2 protocol: v3 interleaved header always starts with 0xDB,
+    // v2 (RS-only, no convolutional) starts with 0x4E ('N' magic byte)
+    if (headerConf > 0.6) {
+      const rawHeaderSymbols = symbols.slice(headerStart, headerStart + headerSymbols);
+      const rawInterleavedBytes = this.symbolsToBytes(rawHeaderSymbols, headerBytes);
+      if (rawInterleavedBytes[0] === 0x4E) {
+        this.suspectV2Protocol = true;
+        console.log('[Decoder] Warning: raw data starts with 0x4E (v2 protocol signature). Sender may be running outdated code.');
+        // Set error message on progress so CLI timeout path can use it
+        this.progress.value = {
+          ...this.progress.value,
+          errorMessage: 'could not decode header. The sender appears to be running an outdated version (v2 protocol). Ask them to reload/clear their browser cache and resend.',
+        };
+      }
+    }
+
+    // Salvage mode: frequency sweep and brute-force attempts
+    if (this.salvageMode) {
+      const sweepResult = this.frequencySweepHeaderDecode(headerBytes, headerSymbols);
+      if (sweepResult) {
+        return; // Success via frequency sweep
+      }
+
+      const bruteResult = this.bruteForceHeaderRecovery(headerBytes, headerSymbols);
+      if (bruteResult) {
+        return; // Success via brute-force
+      }
+    }
+
+    // Try spectral interference compensation on first overall failure
+    if (!this.toneBiases) {
+      const biasDetected = this.estimateToneBiases();
+      if (biasDetected) {
+        console.log('[Decoder] Retrying header with interference compensation at same sync position...');
+
+        // Re-extract header symbols at current sync position WITH biases applied
+        const headerSymbols2 = this.calculateSymbolsForBytes(headerBytes);
+        const interleaverDepth2 = calculateInterleaverDepth(headerBytes);
+
+        // Try with biases at current position + frequency offsets
+        const biasOffsets = [this.estimatedFreqOffset, 0];
+        for (let off = -100; off <= 100; off += 10) {
+          if (!biasOffsets.includes(off)) biasOffsets.push(off);
+        }
+
+        for (const freqOff of biasOffsets) {
+          const softResults = this.extractSymbolsWithOffset(
+            this.bestPhase, this.syncFoundAt, headerSymbols2, freqOff
+          );
+          if (softResults.length < headerSymbols2) continue;
+
+          const softBits = softSymbolsToSoftBits(softResults, AUDIO.BITS_PER_SYMBOL)
+            .slice(0, headerBytes * 8);
+          const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth2, headerBytes);
+
+          // Try soft FEC decode
+          const softResult = decodeHeaderFECSoft(deinterleavedSoft);
+          if (softResult.success) {
+            const header = parseHeaderFrame(softResult.data);
+            if (header && header.crcValid && this.isPlausibleHeader(header)) {
+              console.log(`[Decoder] Header recovered with bias compensation at freq ${freqOff} Hz!`);
+              this.headerInfo = header;
+              this.headerRepeated = header.totalFrames > 1;
+              this.frameCollector.setHeader(header);
+              this.totalErrorsFixed += Math.max(0, softResult.correctedErrors);
+              this.consecutiveHeaderFailures = 0;
+              this.estimatedFreqOffset = freqOff;
+              this.reextractWithOffset();
+              this.headerDecodedTime = Date.now();
+              this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+              this.state = 'receiving_data';
+              this.lastDebugInfo = `Header recovered (bias + freq ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+              return;
+            }
+          }
+
+          // Also try redundancy combining with biases
+          const symbols2Start = this.syncFoundAt + headerSymbols2;
+          const softResults2 = this.extractSymbolsWithOffset(
+            this.bestPhase, symbols2Start, headerSymbols2, freqOff
+          );
+          if (softResults2.length >= headerSymbols2) {
+            const softBits2 = softSymbolsToSoftBits(softResults2, AUDIO.BITS_PER_SYMBOL)
+              .slice(0, headerBytes * 8);
+            const deinterleavedSoft2 = deinterleaveSoftBits(softBits2, interleaverDepth2, headerBytes);
+            const redundantResult = decodeHeaderWithRedundancySoft(deinterleavedSoft, deinterleavedSoft2);
+            if (redundantResult.success) {
+              const header = parseHeaderFrame(redundantResult.data);
+              if (header && header.crcValid && this.isPlausibleHeader(header)) {
+                console.log(`[Decoder] Header recovered with bias + redundancy at freq ${freqOff} Hz!`);
+                this.headerInfo = header;
+                this.headerRepeated = header.totalFrames > 1;
+                this.frameCollector.setHeader(header);
+                this.totalErrorsFixed += Math.max(0, redundantResult.correctedErrors);
+                this.consecutiveHeaderFailures = 0;
+                this.estimatedFreqOffset = freqOff;
+                this.reextractWithOffset();
+                this.headerDecodedTime = Date.now();
+                this.expectedEndTime = this.calculateExpectedEndTime(header.totalFrames);
+                this.state = 'receiving_data';
+                this.lastDebugInfo = `Header recovered (bias + redundancy, freq ${freqOff >= 0 ? '+' : ''}${freqOff} Hz)`;
+                return;
+              }
+            }
+          }
+        }
+
+        // Bias sweep didn't find header — also try brute-force with biases
+        console.log('[Decoder] Bias compensation frequency sweep failed, trying brute-force with biases...');
+        if (this.bruteForceHeaderRecovery(headerBytes, this.calculateSymbolsForBytes(headerBytes))) {
+          return;
+        }
+
+        // Bias-compensated decode at this position failed.
+        // Don't restart with biases — fall through to normal failure path which
+        // marks this position as failed and tries the next best without bias changes.
+        // This avoids changing symbol extraction which could hurt soft-decision FEC.
+        console.log('[Decoder] Bias compensation at this position failed, trying next position...');
+      }
+    }
 
     // Header decode failed - reset and try again
     this.consecutiveHeaderFailures++;
-    console.log('[Decoder] Header failure count:', this.consecutiveHeaderFailures);
 
     // Fatal failure - too many header decode failures
     if (this.consecutiveHeaderFailures >= Decoder.FATAL_HEADER_FAILURES) {
@@ -1153,9 +2085,14 @@ export class Decoder {
       }
 
       // Already tried both modes or no mode detected - give up
-      const errorMsg = this.modeRetryAttempted
-        ? 'Decoding failed in both modes. Try moving closer or reducing background noise.'
-        : 'Too many header decode failures. Check signal quality and try again.';
+      let errorMsg: string;
+      if (this.suspectV2Protocol) {
+        errorMsg = 'could not decode header. The sender appears to be running an outdated version. Ask them to reload/clear cache and resend.';
+      } else if (this.modeRetryAttempted) {
+        errorMsg = 'could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+      } else {
+        errorMsg = 'could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+      }
 
       console.error('[Decoder] Fatal: Too many header failures, giving up');
       this.state = 'error';
@@ -1218,7 +2155,7 @@ export class Decoder {
 
     const start = frameIndex * frameSize;
     const end = Math.min(start + frameSize, totalPayload);
-    return end - start;
+    return Math.max(0, end - start);
   }
 
   private processDataFrame(): void {
@@ -1272,6 +2209,10 @@ export class Decoder {
 
       // Calculate this frame's actual payload size
       const thisFramePayloadSize = this.getActualFramePayloadSize(f);
+      if (thisFramePayloadSize <= 0) {
+        this.framesAttempted.add(f);
+        continue;
+      }
       const thisFrameEncodedBytes = getDataFrameSize(thisFramePayloadSize);
       const frameSymCount = frameSymbolOffsets[f + 1] - frameSymbolOffsets[f];
 
@@ -1281,7 +2222,9 @@ export class Decoder {
       // Try different offsets and phases
       let decoded = false;
 
-      // First try the current phase with different offsets
+      const interleaverDepth = calculateInterleaverDepth(thisFrameEncodedBytes);
+
+      // First try the current phase with different offsets (soft then hard)
       for (const offset of dataOffsets) {
         if (decoded) break;
 
@@ -1290,16 +2233,38 @@ export class Decoder {
 
         if (frameStart < 0 || frameEnd > symbols.length) continue;
 
+        if (offset === 0) {
+          console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes');
+        }
+
+        // === SOFT-DECISION PATH (try first) ===
+        const softBits = this.extractSoftBitsForSlice(this.bestPhase, frameStart, frameSymCount, thisFrameEncodedBytes);
+        if (softBits) {
+          const deinterleavedSoft = deinterleaveSoftBits(softBits, interleaverDepth, thisFrameEncodedBytes);
+          const softDecodeResult = decodeDataFECSoft(deinterleavedSoft, thisFramePayloadSize);
+          if (softDecodeResult.success) {
+            const frame = parseDataFrame(softDecodeResult.data);
+            if (frame && frame.crcValid) {
+              this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo.sessionId);
+              this.totalErrorsFixed += Math.max(0, softDecodeResult.correctedErrors);
+              this.failedDataFrames.delete(f);
+              decoded = true;
+              if (offset !== 0) console.log('[Decoder] Frame', f, 'soft-recovered with offset', offset);
+              console.log('[Decoder] Frame', frame.frameIndex, 'OK (soft), payload:', frame.payloadLength, 'bytes');
+              this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
+              if (this.frameCollector.isComplete()) { this.finalizeDecoding(); return; }
+              break;
+            }
+          }
+        }
+
+        // === HARD-DECISION FALLBACK ===
         const frameSymbolsArr = symbols.slice(frameStart, frameEnd);
         const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
-        const frameBytes = deinterleave(
-          frameBytesRaw,
-          calculateInterleaverDepth(thisFrameEncodedBytes),
-          thisFrameEncodedBytes
-        );
+        const frameBytes = deinterleave(frameBytesRaw, interleaverDepth, thisFrameEncodedBytes);
 
         if (offset === 0) {
-          console.log('[Decoder] Processing data frame', f, 'size:', thisFrameEncodedBytes, 'bytes (first 10):', Array.from(frameBytes.slice(0, 10)));
+          console.log('[Decoder] Hard fallback - first 10 bytes:', Array.from(frameBytes.slice(0, 10)));
           console.log('[Decoder] Expected: [68, ...] = "D" magic');
         }
 
@@ -1314,10 +2279,8 @@ export class Decoder {
             this.failedDataFrames.delete(f);
             decoded = true;
 
-            if (offset !== 0) {
-              console.log('[Decoder] Frame', f, 'recovered with offset', offset);
-            }
-            console.log('[Decoder] Frame', frame.frameIndex, 'OK, payload:', frame.payloadLength, 'bytes');
+            if (offset !== 0) console.log('[Decoder] Frame', f, 'hard-recovered with offset', offset);
+            console.log('[Decoder] Frame', frame.frameIndex, 'OK (hard), payload:', frame.payloadLength, 'bytes');
             this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
 
             if (this.frameCollector.isComplete()) {
@@ -1329,7 +2292,7 @@ export class Decoder {
         }
       }
 
-      // If still not decoded, try other phases with offsets
+      // If still not decoded, try other phases with offsets (soft first, then hard)
       if (!decoded) {
         for (let phase = 0; phase < NUM_PHASES && !decoded; phase++) {
           if (phase === this.bestPhase) continue;
@@ -1344,6 +2307,32 @@ export class Decoder {
 
             if (frameStart < 0 || frameEnd > phaseSymbols.length) continue;
 
+            // === SOFT-DECISION FIRST (other phase) ===
+            const softBits = this.extractSoftBitsForSlice(phase, frameStart, frameSymCount, thisFrameEncodedBytes);
+            if (softBits) {
+              const intDepth = calculateInterleaverDepth(thisFrameEncodedBytes);
+              const deinterleavedSoft = deinterleaveSoftBits(softBits, intDepth, thisFrameEncodedBytes);
+              const softResult = decodeDataFECSoft(deinterleavedSoft, thisFramePayloadSize);
+
+              if (softResult.success) {
+                const frame = parseDataFrame(softResult.data);
+                if (frame && frame.crcValid) {
+                  this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo!.sessionId);
+                  this.totalErrorsFixed += Math.max(0, softResult.correctedErrors);
+                  this.failedDataFrames.delete(f);
+                  decoded = true;
+
+                  console.log('[Decoder] Frame', f, 'soft-recovered with phase', phase, 'offset', offset);
+                  console.log('[Decoder] Frame', frame.frameIndex, 'OK (soft), payload:', frame.payloadLength, 'bytes');
+                  this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
+
+                  if (this.frameCollector.isComplete()) { this.finalizeDecoding(); return; }
+                  break;
+                }
+              }
+            }
+
+            // === HARD-DECISION FALLBACK (other phase) ===
             const frameSymbolsArr = phaseSymbols.slice(frameStart, frameEnd);
             const frameBytesRaw = this.symbolsToBytes(frameSymbolsArr, thisFrameEncodedBytes);
             const frameBytes = deinterleave(
@@ -1358,13 +2347,13 @@ export class Decoder {
               const frame = parseDataFrame(decodeResult.data);
 
               if (frame && frame.crcValid) {
-                this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo.sessionId);
+                this.frameCollector.addFrame(frame.frameIndex, frame.payload, this.headerInfo!.sessionId);
                 this.totalErrorsFixed += Math.max(0, decodeResult.correctedErrors);
                 this.failedDataFrames.delete(f);
                 decoded = true;
 
-                console.log('[Decoder] Frame', f, 'recovered with phase', phase, 'offset', offset);
-                console.log('[Decoder] Frame', frame.frameIndex, 'OK, payload:', frame.payloadLength, 'bytes');
+                console.log('[Decoder] Frame', f, 'hard-recovered with phase', phase, 'offset', offset);
+                console.log('[Decoder] Frame', frame.frameIndex, 'OK (hard), payload:', frame.payloadLength, 'bytes');
                 this.lastDebugInfo = `Frame ${frame.frameIndex}/${framesExpected} received`;
 
                 if (this.frameCollector.isComplete()) {
@@ -1389,7 +2378,8 @@ export class Decoder {
 
     // Check for timeout: if we have significantly more symbols than expected but still can't decode
     const totalExpectedSymbols = frameSymbolOffsets[framesExpected];
-    const symbolsWithBuffer = Math.floor(totalExpectedSymbols * Decoder.SYMBOL_BUFFER_RATIO);
+    const bufferRatio = this.salvageMode ? Decoder.SYMBOL_BUFFER_RATIO * 2 : Decoder.SYMBOL_BUFFER_RATIO;
+    const symbolsWithBuffer = Math.floor(totalExpectedSymbols * bufferRatio);
 
     if (symbolsAvailable >= symbolsWithBuffer) {
       // We have enough symbols (with buffer) - check if all frames have been attempted and failed

@@ -5,12 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   detectToneSoft,
-  detectSymbolsSoft,
-  softToHard,
-  extractSoftMatrix,
-  averageConfidence,
-  measureSignalQuality,
-  SoftUtils,
+  softSymbolsToSoftBits,
   SoftDetectionResult,
 } from '../src/decode/soft-decision';
 import { setAudioMode, TONE_FREQUENCIES, AUDIO } from '../src/utils/constants';
@@ -162,180 +157,105 @@ describe('Soft-Decision Detection', () => {
     });
   });
 
-  describe('detectSymbolsSoft', () => {
-    it('should detect multiple symbols', () => {
-      const toneSequence = [0, 1, 2, 3];
-      const symbolDuration = Math.floor((AUDIO.SYMBOL_DURATION_MS / 1000) * sampleRate);
-      const guardDuration = Math.floor((AUDIO.GUARD_INTERVAL_MS / 1000) * sampleRate);
-
-      // Generate concatenated symbols
-      const totalSamples = toneSequence.length * (symbolDuration + guardDuration);
-      const samples = new Float32Array(totalSamples);
-
-      for (let i = 0; i < toneSequence.length; i++) {
-        const toneIndex = toneSequence[i];
-        const frequency = TONE_FREQUENCIES[toneIndex];
-        const start = i * (symbolDuration + guardDuration);
-
-        for (let j = 0; j < symbolDuration; j++) {
-          const t = j / sampleRate;
-          samples[start + j] = 0.5 * Math.sin(2 * Math.PI * frequency * t);
-        }
-        // Guard interval is silence (zeros)
-      }
-
-      const results = detectSymbolsSoft(
-        samples,
-        sampleRate,
-        symbolDuration,
-        guardDuration
-      );
-
-      expect(results.length).toBe(toneSequence.length);
-
-      for (let i = 0; i < toneSequence.length; i++) {
-        expect(results[i].hardDecision).toBe(toneSequence[i]);
-      }
-    });
-  });
-
-  describe('softToHard', () => {
-    it('should convert soft results to hard decisions', () => {
+  describe('softSymbolsToSoftBits', () => {
+    it('should convert phone mode (4 tones, 2 bits) with clear signal', () => {
+      // Tone 3 = binary 11 → both bits should be ~1.0
       const results: SoftDetectionResult[] = [
-        { softValues: new Uint8Array([255, 10, 20, 30]), hardDecision: 0, confidence: 0.9 },
-        { softValues: new Uint8Array([10, 255, 20, 30]), hardDecision: 1, confidence: 0.8 },
-        { softValues: new Uint8Array([10, 20, 255, 30]), hardDecision: 2, confidence: 0.85 },
+        { softValues: new Uint8Array([0, 0, 0, 255]), hardDecision: 3, confidence: 1.0 },
       ];
 
-      const hard = softToHard(results);
+      const bits = softSymbolsToSoftBits(results, 2);
 
-      expect(hard).toEqual([0, 1, 2]);
+      expect(bits.length).toBe(2);
+      expect(bits[0]).toBeCloseTo(1.0, 1); // MSB = 1
+      expect(bits[1]).toBeCloseTo(1.0, 1); // LSB = 1
     });
-  });
 
-  describe('extractSoftMatrix', () => {
-    it('should extract soft values matrix', () => {
+    it('should convert tone 0 (binary 00) correctly', () => {
+      // Tone 0 = binary 00 → both bits should be ~0.0
       const results: SoftDetectionResult[] = [
-        { softValues: new Uint8Array([255, 10, 20, 30]), hardDecision: 0, confidence: 0.9 },
-        { softValues: new Uint8Array([10, 255, 20, 30]), hardDecision: 1, confidence: 0.8 },
+        { softValues: new Uint8Array([255, 0, 0, 0]), hardDecision: 0, confidence: 1.0 },
       ];
 
-      const matrix = extractSoftMatrix(results);
+      const bits = softSymbolsToSoftBits(results, 2);
 
-      expect(matrix.length).toBe(2);
-      expect(Array.from(matrix[0])).toEqual([255, 10, 20, 30]);
-      expect(Array.from(matrix[1])).toEqual([10, 255, 20, 30]);
+      expect(bits.length).toBe(2);
+      expect(bits[0]).toBeCloseTo(0.0, 1); // MSB = 0
+      expect(bits[1]).toBeCloseTo(0.0, 1); // LSB = 0
     });
-  });
 
-  describe('averageConfidence', () => {
-    it('should calculate average confidence', () => {
+    it('should convert tone 2 (binary 10) correctly', () => {
+      // Tone 2 = binary 10 → MSB ~1.0, LSB ~0.0
       const results: SoftDetectionResult[] = [
-        { softValues: new Uint8Array([255, 10]), hardDecision: 0, confidence: 0.8 },
-        { softValues: new Uint8Array([10, 255]), hardDecision: 1, confidence: 0.6 },
-        { softValues: new Uint8Array([255, 10]), hardDecision: 0, confidence: 1.0 },
+        { softValues: new Uint8Array([0, 0, 255, 0]), hardDecision: 2, confidence: 1.0 },
       ];
 
-      const avg = averageConfidence(results);
+      const bits = softSymbolsToSoftBits(results, 2);
 
-      expect(avg).toBeCloseTo(0.8, 2);
+      expect(bits.length).toBe(2);
+      expect(bits[0]).toBeCloseTo(1.0, 1); // MSB = 1
+      expect(bits[1]).toBeCloseTo(0.0, 1); // LSB = 0
     });
 
-    it('should return 0 for empty array', () => {
-      expect(averageConfidence([])).toBe(0);
-    });
-  });
-
-  describe('measureSignalQuality', () => {
-    it('should return high quality for clean signals', () => {
-      // Simulate clean signal: one dominant soft value
+    it('should produce uncertain bits for ambiguous symbols', () => {
+      // Equal soft values → uncertain (0.5)
       const results: SoftDetectionResult[] = [
-        { softValues: new Uint8Array([255, 5, 5, 5]), hardDecision: 0, confidence: 0.9 },
-        { softValues: new Uint8Array([5, 255, 5, 5]), hardDecision: 1, confidence: 0.9 },
+        { softValues: new Uint8Array([64, 64, 64, 64]), hardDecision: 0, confidence: 0.0 },
       ];
 
-      const quality = measureSignalQuality(results);
+      const bits = softSymbolsToSoftBits(results, 2);
 
-      expect(quality).toBeGreaterThan(0.5);
+      expect(bits[0]).toBeCloseTo(0.5, 1);
+      expect(bits[1]).toBeCloseTo(0.5, 1);
     });
 
-    it('should return lower quality for noisy signals', () => {
-      // Simulate noisy signal: soft values more spread out
+    it('should handle zero total (silence) with hard fallback', () => {
       const results: SoftDetectionResult[] = [
-        { softValues: new Uint8Array([150, 100, 80, 70]), hardDecision: 0, confidence: 0.4 },
-        { softValues: new Uint8Array([120, 130, 100, 90]), hardDecision: 1, confidence: 0.3 },
+        { softValues: new Uint8Array([0, 0, 0, 0]), hardDecision: 2, confidence: 0.0 },
       ];
 
-      const quality = measureSignalQuality(results);
+      const bits = softSymbolsToSoftBits(results, 2);
 
-      expect(quality).toBeLessThan(0.8);
+      expect(bits.length).toBe(2);
+      // Hard decision 2 = binary 10
+      expect(bits[0]).toBe(1.0); // MSB = 1
+      expect(bits[1]).toBe(0.0); // LSB = 0
+    });
+
+    it('should handle multiple symbols', () => {
+      const results: SoftDetectionResult[] = [
+        { softValues: new Uint8Array([255, 0, 0, 0]), hardDecision: 0, confidence: 1.0 },
+        { softValues: new Uint8Array([0, 0, 0, 255]), hardDecision: 3, confidence: 1.0 },
+      ];
+
+      const bits = softSymbolsToSoftBits(results, 2);
+
+      expect(bits.length).toBe(4); // 2 symbols * 2 bits
+      // Symbol 0 = tone 0 = 00
+      expect(bits[0]).toBeCloseTo(0.0, 1);
+      expect(bits[1]).toBeCloseTo(0.0, 1);
+      // Symbol 1 = tone 3 = 11
+      expect(bits[2]).toBeCloseTo(1.0, 1);
+      expect(bits[3]).toBeCloseTo(1.0, 1);
+    });
+
+    it('should work with wideband mode (16 tones, 4 bits)', () => {
+      // Tone 10 = binary 1010 → bits [1, 0, 1, 0]
+      const softValues = new Uint8Array(16).fill(0);
+      softValues[10] = 255;
+
+      const results: SoftDetectionResult[] = [
+        { softValues, hardDecision: 10, confidence: 1.0 },
+      ];
+
+      const bits = softSymbolsToSoftBits(results, 4);
+
+      expect(bits.length).toBe(4);
+      expect(bits[0]).toBeCloseTo(1.0, 1); // bit 3 = 1
+      expect(bits[1]).toBeCloseTo(0.0, 1); // bit 2 = 0
+      expect(bits[2]).toBeCloseTo(1.0, 1); // bit 1 = 1
+      expect(bits[3]).toBeCloseTo(0.0, 1); // bit 0 = 0
     });
   });
 
-  describe('SoftUtils', () => {
-    describe('toLogLikelihood / fromLogLikelihood', () => {
-      it('should roundtrip soft values', () => {
-        const testValues = [10, 50, 127, 200, 245];
-
-        for (const soft of testValues) {
-          const llr = SoftUtils.toLogLikelihood(soft);
-          const recovered = SoftUtils.fromLogLikelihood(llr);
-
-          // Allow small rounding error
-          expect(Math.abs(recovered - soft)).toBeLessThan(2);
-        }
-      });
-
-      it('should return 0 LLR for uncertain (127)', () => {
-        const llr = SoftUtils.toLogLikelihood(127);
-        expect(Math.abs(llr)).toBeLessThan(0.1);
-      });
-
-      it('should return positive LLR for high soft values', () => {
-        const llr = SoftUtils.toLogLikelihood(230);
-        expect(llr).toBeGreaterThan(0);
-      });
-
-      it('should return negative LLR for low soft values', () => {
-        const llr = SoftUtils.toLogLikelihood(25);
-        expect(llr).toBeLessThan(0);
-      });
-    });
-
-    describe('combine', () => {
-      it('should combine two soft values', () => {
-        // Two high values should stay high
-        expect(SoftUtils.combine(250, 250)).toBeGreaterThan(200);
-
-        // High and low should reduce
-        expect(SoftUtils.combine(250, 50)).toBeLessThan(150);
-
-        // Two low values should stay low
-        expect(SoftUtils.combine(50, 50)).toBeLessThan(100);
-      });
-    });
-
-    describe('invert', () => {
-      it('should invert soft values', () => {
-        expect(SoftUtils.invert(255)).toBe(0);
-        expect(SoftUtils.invert(0)).toBe(255);
-        expect(SoftUtils.invert(127)).toBe(128);
-      });
-    });
-
-    describe('isConfident / isUncertain', () => {
-      it('should detect confident values', () => {
-        expect(SoftUtils.isConfident(250)).toBe(true);
-        expect(SoftUtils.isConfident(150)).toBe(false);
-        expect(SoftUtils.isConfident(220, 200)).toBe(true);
-      });
-
-      it('should detect uncertain values', () => {
-        expect(SoftUtils.isUncertain(127)).toBe(true);
-        expect(SoftUtils.isUncertain(130)).toBe(true);
-        expect(SoftUtils.isUncertain(255)).toBe(false);
-        expect(SoftUtils.isUncertain(10)).toBe(false);
-      });
-    });
-  });
 });

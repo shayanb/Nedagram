@@ -9,6 +9,7 @@ import { Decoder } from '../src/decode/index.js';
 interface DecodeOptions {
   output?: string;
   password?: string;
+  salvage?: boolean;
   quiet?: boolean;
   json?: boolean;
 }
@@ -55,13 +56,14 @@ export async function decodeCommand(
     let lastState = '';
 
     // Wrap in promise for async completion
-    const result = await new Promise<{ text: string; checksum: string; encrypted: boolean; stats: { originalSize: number; compressed: boolean } }>((resolve, reject) => {
+    const result = await new Promise<{ text: string; checksum: string; encrypted: boolean; needsPassword?: boolean; stats: { originalSize: number; compressed: boolean } }>((resolve, reject) => {
       decoder.start(
         (result) => {
           resolve({
             text: result.text,
             checksum: result.checksum,
             encrypted: result.encrypted,
+            needsPassword: result.needsPassword,
             stats: result.stats as { originalSize: number; compressed: boolean },
           });
         },
@@ -75,20 +77,48 @@ export async function decodeCommand(
         decoder.setPassword(options.password);
       }
 
+      // Enable salvage mode for best-effort recovery
+      if (options.salvage) {
+        decoder.setSalvageMode(true);
+        log('Salvage mode enabled: relaxed thresholds, extended timeouts');
+      }
+
       // Feed samples in chunks
       let offset = 0;
+      let postFeedPolls = 0;
+      const MAX_POST_FEED_POLLS = 30; // 3 seconds max after all samples fed
+
       const processChunk = () => {
         if (offset >= samples.length) {
-          // All samples processed, wait a bit for decoder to finish
-          setTimeout(() => {
-            const progress = decoder.progress.value;
-            if (progress.state === 'error') {
-              reject(new Error(progress.errorMessage || 'Decode failed'));
-            } else if (progress.state !== 'complete') {
-              // Still processing, check again
-              setTimeout(processChunk, 100);
+          // All samples processed - poll for completion with a hard limit
+          postFeedPolls++;
+          const progress = decoder.progress.value;
+
+          if (progress.state === 'error') {
+            reject(new Error(progress.errorMessage || 'Decode failed'));
+            return;
+          }
+          if (progress.state === 'complete') {
+            return; // resolve was already called by decoder callback
+          }
+          if (postFeedPolls >= MAX_POST_FEED_POLLS) {
+            const state = progress.state;
+            let msg: string;
+            if (state === 'receiving_data') {
+              msg = `Decode failed: header OK but data frame incomplete (${progress.framesReceived}/${progress.totalFrames} frames). ` +
+                'Recording may be too short or signal too distorted.';
+            } else if (state === 'receiving_header') {
+              msg = progress.errorMessage
+                ? `Decode failed: ${progress.errorMessage}`
+                : 'Decode failed: could not decode header. Signal may be too distorted. Try: nedagram analyze <file>';
+            } else {
+              msg = 'Decode failed: could not recover signal from audio. Try: nedagram analyze <file>';
             }
-          }, 500);
+            reject(new Error(msg));
+            return;
+          }
+
+          setTimeout(processChunk, 100);
           return;
         }
 
@@ -123,6 +153,23 @@ export async function decodeCommand(
 
       processChunk();
     });
+
+    // Handle encrypted files that need a password
+    if (result.needsPassword) {
+      if (options.json) {
+        console.log(JSON.stringify({
+          success: false,
+          encrypted: true,
+          error: 'Encrypted file requires a password. Use -p <password> to decrypt.',
+          bytes: result.stats.originalSize,
+        }, null, 2));
+        process.exit(1);
+      }
+      console.error('\nThis file is encrypted.');
+      console.error('Use -p <password> to decrypt:');
+      console.error(`  nedagram decode -p <password> "${filePath}"`);
+      process.exit(1);
+    }
 
     // JSON output mode
     if (options.json) {
