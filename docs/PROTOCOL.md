@@ -1,7 +1,7 @@
 # Nedagram Protocol Specification
 
 **Version**: 3.0 (N3)
-**Last Updated**: January 2026
+**Last Updated**: February 2026
 
 This document describes the wire format and encoding used by Nedagram to transmit text data over audio.
 
@@ -31,25 +31,25 @@ Nedagram encodes data into audio tones using MFSK (Multiple Frequency Shift Keyi
 ### Pipeline Overview
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                        SENDER                                     │
-├───────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│   Input Text ──► Compress ──► Encrypt* ──► Frame ──► FEC ──► MFSK │
-│                  (DEFLATE)    (ChaCha20)   (N3)     (RS+Conv)     │
-│                                                                   │
-└───────────────────────────────┬───────────────────────────────────┘
-                                │ Audio
-                                ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                        RECEIVER                                   │
-├───────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│   MFSK ──► FEC Decode ──► Deframe ──► Decrypt* ──► Decompress     │
-│   Detect   (Viterbi+RS)             (ChaCha20)    (DEFLATE)       │
-│                                                                   │
-└───────────────────────────────────────────────────────────────────┘
-                                                    * if encrypted
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                                SENDER                                            │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   Input Text ──► Compress ──► Encrypt* ──► Frame ──► FEC ──► Interleave ──► MFSK │
+│                  (DEFLATE)    (ChaCha20)   (N3)    (RS+Conv)  (block)            │
+│                                                                                  │
+└─────────────────────────────────────────┬────────────────────────────────────────┘
+                                          │ Audio
+                                          ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                                RECEIVER                                          │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   MFSK ──► Deinterleave ──► FEC Decode ──► Deframe ──► Decrypt* ──► Decompress   │
+│   Detect                    (Viterbi+RS)               (ChaCha20)    (DEFLATE)   │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+                                                                    * if encrypted
 ```
 
 ---
@@ -384,16 +384,17 @@ Unencrypted payload format:
 
 ## Error Correction
 
-Nedagram v3 uses concatenated FEC (similar to NASA's Voyager):
+Nedagram v3 uses concatenated FEC with interleaving (similar to NASA's Voyager):
 
 ```
-Data ──► RS Encode ──► Scramble ──► Convolutional Encode ──► Symbols
-         (outer)       (LFSR)       (inner)
+Data ──► RS Encode ──► Scramble ──► Convolutional Encode ──► Interleave ──► Symbols
+         (outer)       (LFSR)       (inner)                  (block)
 ```
 
 - **Reed-Solomon (outer)**: Corrects burst errors (up to 8 bytes per frame)
 - **Convolutional (inner)**: Corrects random bit errors via Viterbi decoding
 - **LFSR scrambler**: Ensures no long repetitive patterns, spreads errors for better correction
+- **Block interleaver**: Spreads adjacent bytes across the transmission so burst errors are distributed across multiple RS blocks
 
 ### Reed-Solomon (Outer Code)
 
@@ -422,6 +423,39 @@ Data ──► RS Encode ──► Scramble ──► Convolutional Encode ─�
 | Type | LFSR |
 | Polynomial | x^15 + x^14 + 1 |
 | Seed | 0x8016 |
+
+### Block Interleaver
+
+Applied after convolutional encoding (on the byte stream before MFSK modulation). Spreads adjacent bytes across the transmission so that burst errors (e.g. a brief noise spike corrupting several consecutive symbols) are scattered across multiple RS codewords, making them correctable.
+
+| Parameter | Value |
+|-----------|-------|
+| Type | Block (matrix) interleaver |
+| Depth (rows) | 8 |
+| Columns | ceil(length / 8) |
+| Operation | Write row-by-row, read column-by-column |
+| Size | Preserved (no padding) |
+
+```
+Interleave (encode):
+
+  Input bytes:  [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, ...]
+
+  Conceptual matrix (8 rows × ceil(N/8) cols), filled row-by-row:
+
+       col 0   col 1   col 2   ...
+  row 0:  b0      b1      b2
+  row 1:  b3      b4      b5
+  row 2:  b6      b7      b8
+  ...
+
+  Read column-by-column:  [b0, b3, b6, ..., b1, b4, b7, ..., b2, b5, b8, ...]
+
+De-interleave (decode):
+  Reverse operation — read in column order, write back to row positions.
+```
+
+> **Note**: When using soft-decision decoding, the deinterleaver operates on groups of 8 soft bits (one byte's worth) using the same permutation, preserving per-bit confidence values for Viterbi decoding.
 
 For detailed FEC math, see [Technical Specs in README](../README.md#technical-specifications).
 
@@ -605,6 +639,7 @@ FLAG_CRC32_PRESENT = 0x04  // CRC32 appended to payload (unencrypted only)
 HEADER_SIZE     = 12 bytes
 MAX_PAYLOAD     = 128 bytes per frame
 RS_PARITY       = 16 bytes
+INTERLEAVER_ROWS = 8
 
 // Limits
 MAX_TOTAL_PAYLOAD = 100 KB
