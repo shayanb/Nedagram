@@ -1,8 +1,8 @@
 # These are supported funding model platforms
-github: [shayanb]
+github: shayanb
 
 # Buy Me a Coffee
-buy_me_a_coffee: ["https://buymeacoffee.com/pangana"]
+buy_me_a_coffee: pangana
 
 # Crypto addresses (add to README/landing page)
 BTC: bc1qkfq3hg5kpzgy7muc8m3pmh6zemhv820a0ndqgg
@@ -11,4 +11,4 @@ ZEC: u1pclheucppc87qlffh9m8wjfw87w2nka40w9nxjuqnyppj0kx9xp7z9rg6wx556662y5f8dtfy
 Tron: TBSCbnTZCELrMnioobZMkah5r9qS6B1tC6
 
 # custom
-custom: ["https://crowdwalrus.xyz/campaigns/nedagram", crowdwalrus.xyz]
+custom: ["https://crowdwalrus.xyz/campaigns/nedagram"]
