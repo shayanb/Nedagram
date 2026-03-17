@@ -10,6 +10,7 @@ import { packetize } from './frame';
 import { encodeWithV3FEC, calculateV3TotalSize } from './v3-fec';
 import { interleave, calculateInterleaverDepth } from './interleave';
 import { generateTransmission, calculateDuration } from './modulate';
+import { generateMusicTransmission, estimateMusicDuration } from './music-stego';
 import { sha256Hex } from '../lib/sha256';
 import { encrypt, ENCRYPTION_OVERHEAD } from '../lib/crypto';
 import { crc32Bytes } from '../lib/crc32';
@@ -51,6 +52,10 @@ export interface EncodeResult {
 export interface EncodeOptions {
   sampleRate?: number;
   password?: string;  // If provided, data will be encrypted
+  /** Cover music audio (mono Float32Array at sampleRate). If provided, uses music steganography mode. */
+  musicSamples?: Float32Array;
+  /** Tone-to-music ratio in dB (negative = quieter). Default: -6 */
+  tmrDb?: number;
 }
 
 /**
@@ -165,7 +170,11 @@ export async function encodeBytes(
   const totalEncodedBytes = allEncodedFrames.reduce((sum, f) => sum + f.length, 0);
 
   // Generate audio
-  const audio = generateTransmission(allEncodedFrames, sampleRate);
+  const audio = options?.musicSamples
+    ? generateMusicTransmission(allEncodedFrames, options.musicSamples, sampleRate, {
+        tmrDb: options.tmrDb,
+      })
+    : generateTransmission(allEncodedFrames, sampleRate);
 
   // Calculate duration
   const durationSeconds = audio.length / sampleRate;

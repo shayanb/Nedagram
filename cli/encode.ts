@@ -3,9 +3,10 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { setAudioMode, type AudioMode } from '../src/utils/constants.js';
+import { execSync } from 'child_process';
+import { setAudioMode, AUDIO, type AudioMode } from '../src/utils/constants.js';
 import { encodeString } from '../src/encode/index.js';
-import { writeWavFile, createWavBuffer } from './wav-io.js';
+import { writeWavFile, createWavBuffer, readWavFile } from './wav-io.js';
 
 interface EncodeOptions {
   file?: string;
@@ -15,6 +16,8 @@ interface EncodeOptions {
   password?: string;
   quiet?: boolean;
   json?: boolean;
+  music?: string;
+  tmr?: string;
 }
 
 interface EncodeResult {
@@ -27,6 +30,23 @@ interface EncodeResult {
   mode: string;
   encrypted: boolean;
   compressed: boolean;
+}
+
+/**
+ * Load a music file (MP3/WAV/etc) as mono Float32Array at target sample rate.
+ * Uses ffmpeg for format conversion.
+ */
+function loadMusicFile(path: string, sampleRate: number): Float32Array {
+  const tmpPath = '/tmp/nedagram-music-tmp.wav';
+  try {
+    execSync(
+      `ffmpeg -y -i "${path}" -ar ${sampleRate} -ac 1 -c:a pcm_s16le "${tmpPath}" 2>/dev/null`,
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+  } catch {
+    throw new Error(`Failed to load music file: ${path}. Ensure ffmpeg is installed.`);
+  }
+  return readWavFile(tmpPath);
 }
 
 export async function encodeCommand(
@@ -75,10 +95,22 @@ export async function encodeCommand(
       process.exit(1);
     }
 
+    // Load cover music if --music flag provided
+    let musicSamples: Float32Array | undefined;
+    if (options.music) {
+      log(`Loading cover music: ${options.music}`);
+      musicSamples = loadMusicFile(options.music, AUDIO.SAMPLE_RATE);
+      log(`Music: ${(musicSamples.length / AUDIO.SAMPLE_RATE).toFixed(1)}s`);
+    }
+
+    const tmrDb = options.tmr ? parseFloat(options.tmr) : undefined;
+
     // Encode
     log(`Encoding ${inputText.length} bytes...`);
     const result = await encodeString(inputText, {
       password: options.encrypt ? options.password : undefined,
+      musicSamples,
+      tmrDb,
     });
 
     log(`Duration: ${result.durationSeconds.toFixed(1)}s`);

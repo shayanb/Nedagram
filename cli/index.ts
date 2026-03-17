@@ -42,6 +42,8 @@ program
   .option('-p, --password <password>', 'Password for encryption (use with -e). Choose a strong password.')
   .option('-q, --quiet', 'Suppress progress output (only show result)')
   .option('--json', 'Output result as JSON (includes metadata, file path, sha256)')
+  .option('--music <path>', 'Cover music file (MP3/WAV) for steganography mode. Requires ffmpeg.')
+  .option('--tmr <dB>', 'Tone-to-music ratio in dB for music mode (default: -6)', '-6')
   .addHelpText('after', `
 Encryption:
   When using -e/--encrypt, you must also provide -p/--password.
@@ -52,9 +54,15 @@ Audio Modes:
   phone     - Optimized for phone calls and voice codecs (slower, more robust)
   wideband  - Higher quality for direct speaker-to-mic transmission (faster)
 
+Music Steganography:
+  Use --music to embed the message inside a cover music file.
+  The output sounds like music instead of modem tones.
+  The receiver does NOT need the music file to decode.
+
 Examples:
   $ nedagram encode "Hello World" -o hello.wav
   $ nedagram encode -f secret.txt -o secret.wav -e -p "my password"
+  $ nedagram encode "secret message" --music song.mp3 -m phone -o output.wav
   $ cat data.json | nedagram encode -m phone -o data.wav`)
   .action(encodeCommand);
 

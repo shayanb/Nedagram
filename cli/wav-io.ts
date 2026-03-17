@@ -130,6 +130,13 @@ export function parseWavBuffer(buffer: Buffer): WavData {
 }
 
 /**
+ * Read a WAV file and return just the samples as Float32Array
+ */
+export function readWavFile(filePath: string): Float32Array {
+  return parseWavFile(filePath).samples;
+}
+
+/**
  * Write Float32Array samples to a WAV file
  */
 export function writeWavFile(

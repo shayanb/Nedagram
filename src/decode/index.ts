@@ -19,6 +19,7 @@ import { deinterleave, deinterleaveSoftBits, calculateInterleaverDepth } from '.
 import { sha256Hex } from '../lib/sha256';
 import { ChirpDetector } from '../lib/chirp';
 import { FrequencyOffsetTracker } from './freq-offset';
+import { PilotSyncDetector } from './pilot-sync';
 
 export type DecodeState =
   | 'idle'
@@ -96,6 +97,8 @@ export class Decoder {
 
   // Chirp detection (Phase 2: matched filter)
   private chirpDetector: ChirpDetector;
+  private pilotSyncDetector: PilotSyncDetector;
+  private pilotSyncUsed: boolean = false;
   private chirpDetected = false;
   private chirpEndSample = -1;  // Sample index where chirp ends (calibration starts)
   private lastPeakFreq = 0;
@@ -175,6 +178,7 @@ export class Decoder {
 
     // Initialize chirp detector for robust preamble detection
     this.chirpDetector = new ChirpDetector(sampleRate, 0.3);
+    this.pilotSyncDetector = new PilotSyncDetector(sampleRate);
 
     // Frequency offset tracker (phone codecs can shift tones by 50-100+ Hz)
     this.freqOffsetTracker = new FrequencyOffsetTracker(200);
@@ -395,6 +399,45 @@ export class Decoder {
         this.lastDebugInfo = `Chirp detected (${chirpResult.mode || 'unknown'}, ${(chirpResult.confidence * 100).toFixed(0)}% confidence)`;
       } else if (chirpResult.confidence > 0.15) {
         this.lastDebugInfo = `Searching for chirp... (${(chirpResult.confidence * 100).toFixed(0)}% match)`;
+      }
+
+      // Also try pilot sync detection (for music steganography mode)
+      if (!this.chirpDetected && this.bestPhase < 0) {
+        const pilotResult = this.pilotSyncDetector.addSamples(samples);
+        if (pilotResult.detected && pilotResult.mode) {
+          console.log('[Decoder] Pilot sync detected! Mode:', pilotResult.mode,
+            'Confidence:', (pilotResult.confidence * 100).toFixed(0) + '%',
+            'Match:', (pilotResult.matchRatio * 100).toFixed(0) + '%',
+            'Phase:', pilotResult.phase);
+
+          // Set mode
+          this.detectedAudioMode = pilotResult.mode;
+          setAudioMode(pilotResult.mode);
+          this.updateSymbolTiming();
+
+          // The pilot detector returns pilotEndSample (absolute sample index)
+          // and phase. We need to convert to the decoder's symbol index grid.
+          const totalSymbolSamples = Math.floor(
+            ((AUDIO.SYMBOL_DURATION_MS + AUDIO.GUARD_INTERVAL_MS) / 1000) * this.sampleRate
+          );
+          const phaseOffset = Math.floor(totalSymbolSamples / 4);
+
+          // syncFoundAt = symbol index in phaseSymbols[phase] where header starts
+          // The decoder's symbol grid: symbol i starts at phase*phaseOffset + i*totalSymbolSamples
+          // So: i = (pilotEndSample - phase*phaseOffset) / totalSymbolSamples
+          const phaseOffsetSamples = pilotResult.phase * phaseOffset;
+          this.bestPhase = pilotResult.phase;
+          this.syncFoundAt = Math.round((pilotResult.pilotEndSample - phaseOffsetSamples) / totalSymbolSamples);
+          this.chirpDetected = true; // Prevent further chirp detection
+          this.chirpEndSample = -1; // No chirp in pilot mode
+          this.pilotSyncUsed = true;
+
+          // Transition to header reception
+          this.state = 'receiving_header';
+          this.syncDetectedTime = Date.now();
+          this.lastHighEnergyTime = Date.now();
+          this.lastDebugInfo = `Pilot sync found (${pilotResult.mode}, ${(pilotResult.matchRatio * 100).toFixed(0)}% match)`;
+        }
       }
     }
 
@@ -1732,7 +1775,8 @@ export class Decoder {
     console.log('[Decoder] Got enough symbols for header...');
 
     // Estimate frequency offset from calibration tones (only on first attempt)
-    if (this.consecutiveHeaderFailures === 0 && this.estimatedFreqOffset === 0) {
+    // Skip for pilot sync mode — no dedicated calibration tones available
+    if (this.consecutiveHeaderFailures === 0 && this.estimatedFreqOffset === 0 && !this.pilotSyncUsed) {
       this.estimateFreqOffsetFromCalibration();
     }
 
@@ -2074,8 +2118,9 @@ export class Decoder {
           this.phaseSymbols[p] = [];
         }
 
-        // Re-initialize chirp detector for new mode
+        // Re-initialize chirp and pilot detectors for new mode
         this.chirpDetector = new ChirpDetector(this.sampleRate, 0.3);
+        this.pilotSyncDetector.reset();
         this.chirpDetected = false;
         this.chirpEndSample = -1;
         this.state = 'detecting_preamble';
