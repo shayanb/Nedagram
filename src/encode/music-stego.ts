@@ -12,7 +12,7 @@ import { modulateBytes, calculateSymbolCount } from './modulate';
 export interface MusicStegoOptions {
   /** Tone-to-music ratio in dB (negative = tones quieter than music). Default: -6 */
   tmrDb?: number;
-  /** Offset in seconds into the music where tones start. Default: 0.5 */
+  /** Offset in seconds into the music where tones start. Default: auto-detect loud section */
   startOffsetSec?: number;
 }
 
@@ -25,6 +25,39 @@ function rms(samples: Float32Array): number {
     sum += samples[i] * samples[i];
   }
   return Math.sqrt(sum / samples.length);
+}
+
+/**
+ * Find a good start offset in the music where energy is high enough
+ * to mask the initial pilot tones. Searches in 0.5s windows.
+ *
+ * Returns offset in samples. Prefers positions where a loud section
+ * is just starting (energy rising), within the first 10 seconds.
+ */
+function findGoodStartOffset(
+  music: Float32Array,
+  sampleRate: number,
+  neededDuration: number,
+): number {
+  const windowSize = Math.floor(0.5 * sampleRate); // 0.5s windows
+  const maxSearchSec = Math.min(10, (music.length / sampleRate) - neededDuration - 1);
+  if (maxSearchSec <= 0) return Math.floor(0.5 * sampleRate); // fallback
+
+  const maxSearchSamples = Math.floor(maxSearchSec * sampleRate);
+  const overallRms = rms(music.subarray(0, Math.min(music.length, sampleRate * 30)));
+
+  // Find the first window that exceeds 80% of overall RMS (a "loud" section)
+  for (let pos = 0; pos < maxSearchSamples; pos += windowSize) {
+    const end = Math.min(pos + windowSize, music.length);
+    const windowRms = rms(music.subarray(pos, end));
+    if (windowRms >= overallRms * 0.8) {
+      // Found a loud enough section — start here
+      return pos;
+    }
+  }
+
+  // Fallback: start at 2s (past any intro silence)
+  return Math.floor(2 * sampleRate);
 }
 
 /**
@@ -46,8 +79,20 @@ export function generateMusicTransmission(
   options?: MusicStegoOptions,
 ): Float32Array {
   const tmrDb = options?.tmrDb ?? -6;
-  const startOffsetSec = options?.startOffsetSec ?? 0.5;
-  const startOffsetSamples = Math.floor(startOffsetSec * sampleRate);
+
+  // Calculate tone duration to determine start offset
+  const symbolSamples = Math.floor((AUDIO.SYMBOL_DURATION_MS / 1000) * sampleRate);
+  const pilotSymbols = 32; // pilot(24) + sync(8)
+  const dataSymbols = encodedFrames.reduce(
+    (sum, f) => sum + Math.ceil((f.length * 8) / AUDIO.BITS_PER_SYMBOL), 0
+  );
+  const endMarkerSymbols = AUDIO.SYNC_PATTERN.length;
+  const totalToneDuration = (pilotSymbols + dataSymbols + endMarkerSymbols) * symbolSamples / sampleRate;
+
+  // Auto-detect a good start position if not specified
+  const startOffsetSamples = options?.startOffsetSec != null
+    ? Math.floor(options.startOffsetSec * sampleRate)
+    : findGoodStartOffset(musicSamples, sampleRate, totalToneDuration);
 
   // 1. Generate the raw tone signal (pilot preamble + data)
   const toneParts: Float32Array[] = [];
