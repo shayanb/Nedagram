@@ -331,6 +331,171 @@
   font-weight: 500;
 }
 
+/* Music steganography */
+.music-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.music-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.music-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+}
+
+.music-upload:hover {
+  border-color: var(--color-primary);
+  background: rgba(74, 158, 107, 0.05);
+}
+
+.music-upload-icon {
+  font-size: 1.5rem;
+  opacity: 0.6;
+}
+
+.music-upload-text {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.music-upload-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.music-loading {
+  padding: var(--space-sm);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.music-file-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.music-file-icon {
+  font-size: 1.2rem;
+  opacity: 0.7;
+}
+
+.music-file-name {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-file-duration {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.music-file-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-xs);
+  line-height: 1;
+}
+
+.music-file-clear:hover {
+  color: var(--color-error);
+}
+
+.music-advanced-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) 0;
+}
+
+.music-advanced-toggle:hover {
+  color: var(--color-text);
+}
+
+.stealth-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-top: var(--space-xs);
+}
+
+.stealth-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.stealth-options {
+  display: flex;
+  gap: 2px;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.stealth-btn {
+  padding: var(--space-xs) var(--space-sm);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--color-text-secondary);
+  transition: all 0.15s;
+}
+
+.stealth-btn.active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.music-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: rgba(100, 140, 180, 0.15);
+  color: #648cb4;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.music-badge::before {
+  content: '\266B';
+  font-size: 0.75rem;
+}
+
 /* Responsive adjustments */
 @media (max-width: 480px) {
   .options-row {

@@ -42,6 +42,7 @@ export interface DecodeProgress {
   symbolsReceived?: number;
   chirpDetected?: boolean;  // True when preamble chirp is detected
   signalWarning?: boolean;  // True when repeated failures detected (poor signal quality)
+  musicMode?: boolean;      // True when pilot sync detected (music steganography)
 }
 
 export interface DecodeResult {
@@ -49,6 +50,7 @@ export interface DecodeResult {
   text: string;
   checksum: string;
   encrypted: boolean;
+  musicMode?: boolean;      // True if decoded via music steganography (pilot sync)
   needsPassword?: boolean;  // True if encrypted but no password provided
   stats: {
     originalSize: number;
@@ -272,6 +274,7 @@ export class Decoder {
       text,
       checksum,
       encrypted: this.headerInfo.encrypted,
+      musicMode: this.pilotSyncUsed,
       stats: {
         originalSize: this.headerInfo.originalLength,
         compressedSize: this.headerInfo.payloadLength,
@@ -400,44 +403,41 @@ export class Decoder {
       } else if (chirpResult.confidence > 0.15) {
         this.lastDebugInfo = `Searching for chirp... (${(chirpResult.confidence * 100).toFixed(0)}% match)`;
       }
+    }
 
-      // Also try pilot sync detection (for music steganography mode)
-      if (!this.chirpDetected && this.bestPhase < 0) {
-        const pilotResult = this.pilotSyncDetector.addSamples(samples);
-        if (pilotResult.detected && pilotResult.mode) {
-          console.log('[Decoder] Pilot sync detected! Mode:', pilotResult.mode,
-            'Confidence:', (pilotResult.confidence * 100).toFixed(0) + '%',
-            'Match:', (pilotResult.matchRatio * 100).toFixed(0) + '%',
-            'Phase:', pilotResult.phase);
+    // Pilot sync detection runs INDEPENDENTLY of chirp detection
+    // This prevents chirp false-positives on music from blocking pilot detection
+    if (!this.pilotSyncUsed && this.bestPhase < 0 && this.state === 'detecting_preamble') {
+      const pilotResult = this.pilotSyncDetector.addSamples(samples);
+      if (pilotResult.detected && pilotResult.mode) {
+        console.log('[Decoder] Pilot sync detected! Mode:', pilotResult.mode,
+          'Confidence:', (pilotResult.confidence * 100).toFixed(0) + '%',
+          'Match:', (pilotResult.matchRatio * 100).toFixed(0) + '%',
+          'Phase:', pilotResult.phase);
 
-          // Set mode
-          this.detectedAudioMode = pilotResult.mode;
-          setAudioMode(pilotResult.mode);
-          this.updateSymbolTiming();
+        // Set mode
+        this.detectedAudioMode = pilotResult.mode;
+        setAudioMode(pilotResult.mode);
+        this.updateSymbolTiming();
 
-          // The pilot detector returns pilotEndSample (absolute sample index)
-          // and phase. We need to convert to the decoder's symbol index grid.
-          const totalSymbolSamples = Math.floor(
-            ((AUDIO.SYMBOL_DURATION_MS + AUDIO.GUARD_INTERVAL_MS) / 1000) * this.sampleRate
-          );
-          const phaseOffset = Math.floor(totalSymbolSamples / 4);
+        // syncFoundAt = symbol index in phaseSymbols[phase] where header starts
+        // The decoder's symbol grid: symbol i starts at phase*phaseOffset + i*symbolSamples
+        const symbolSamples = this.symbolSamples;
+        const phaseOffset = this.phaseOffset;
 
-          // syncFoundAt = symbol index in phaseSymbols[phase] where header starts
-          // The decoder's symbol grid: symbol i starts at phase*phaseOffset + i*totalSymbolSamples
-          // So: i = (pilotEndSample - phase*phaseOffset) / totalSymbolSamples
-          const phaseOffsetSamples = pilotResult.phase * phaseOffset;
-          this.bestPhase = pilotResult.phase;
-          this.syncFoundAt = Math.round((pilotResult.pilotEndSample - phaseOffsetSamples) / totalSymbolSamples);
-          this.chirpDetected = true; // Prevent further chirp detection
-          this.chirpEndSample = -1; // No chirp in pilot mode
-          this.pilotSyncUsed = true;
+        const phaseOffsetSamples = pilotResult.phase * phaseOffset;
+        this.bestPhase = pilotResult.phase;
+        this.syncFoundAt = Math.round((pilotResult.pilotEndSample - phaseOffsetSamples) / symbolSamples);
+        this.chirpDetected = true; // Prevent further chirp detection
+        this.chirpEndSample = -1; // No chirp in pilot mode
+        this.pilotSyncUsed = true;
 
-          // Transition to header reception
-          this.state = 'receiving_header';
-          this.syncDetectedTime = Date.now();
-          this.lastHighEnergyTime = Date.now();
-          this.lastDebugInfo = `Pilot sync found (${pilotResult.mode}, ${(pilotResult.matchRatio * 100).toFixed(0)}% match)`;
-        }
+        // Transition to header reception
+        this.state = 'receiving_header';
+        this.syncDetectedTime = Date.now();
+        this.lastHighEnergyTime = Date.now();
+        this.lastDebugInfo = `Pilot sync found (${pilotResult.mode}, ${(pilotResult.matchRatio * 100).toFixed(0)}% match)`;
+        this.progress.value = { ...this.progress.value, musicMode: true };
       }
     }
 
@@ -2532,6 +2532,7 @@ export class Decoder {
           text: '',
           checksum: '',
           encrypted: true,
+          musicMode: this.pilotSyncUsed,
           needsPassword: true,
           stats: {
             originalSize: this.headerInfo.originalLength,
@@ -2568,6 +2569,7 @@ export class Decoder {
         text,
         checksum,
         encrypted: this.headerInfo.encrypted,
+        musicMode: this.pilotSyncUsed,
         stats: {
           originalSize: this.headerInfo.originalLength,
           compressedSize: this.headerInfo.payloadLength,

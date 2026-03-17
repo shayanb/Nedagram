@@ -53,6 +53,21 @@ export const fa: Translations = {
       strong: 'قوی',
     },
     encrypted: 'رمزگذاری شده',
+    // Music steganography
+    musicMode: 'پنهان‌نگاری موسیقی',
+    musicOff: 'خاموش',
+    musicOn: 'روشن',
+    musicUpload: 'آپلود موسیقی پوشش',
+    musicUploadHint: 'MP3, WAV, M4A',
+    musicLoading: 'بارگذاری صدا...',
+    musicDuration: 'مدت',
+    musicClear: 'حذف',
+    musicAdvanced: 'پیشرفته',
+    stealthLevel: 'مخفی‌سازی',
+    stealthLow: 'کم',
+    stealthMedium: 'متوسط',
+    stealthHigh: 'زیاد',
+    musicBadge: 'حالت موسیقی',
   },
   receive: {
     title: 'دریافت',
@@ -93,6 +108,8 @@ export const fa: Translations = {
     errorHint: 'صدا را دوباره از ابتدا پخش کنید',
     scanToCopy: 'برای کپی اسکن کنید',
     clear: 'پاک کردن',
+    // Music steganography
+    musicDetected: 'پنهان در موسیقی',
     // Encryption
     encrypted: 'رمزگذاری شده',
     passwordRequired: 'رمز عبور لازم است',

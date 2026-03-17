@@ -514,3 +514,20 @@
   border-radius: 50%;
 }
 
+.music-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: rgba(100, 140, 180, 0.15);
+  color: #648cb4;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.music-badge::before {
+  content: '\266B';
+  font-size: 0.75rem;
+}
+

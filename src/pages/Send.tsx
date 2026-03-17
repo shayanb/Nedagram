@@ -9,7 +9,7 @@ import { QRDisplay } from '../components/QRDisplay';
 import { ChecksumDisplay } from '../components/ChecksumDisplay';
 import { encodeString, checkPayloadSize, estimateEncode, type EncodeResult } from '../encode';
 import { playAudio, stopAudio, pauseAudio, isPlaying, getCurrentTime } from '../audio/player';
-import { downloadWAV } from '../lib/wav';
+import { downloadWAV, parseAudioFile } from '../lib/wav';
 import { LIMITS, getAudioMode, setAudioMode, type AudioMode } from '../utils/constants';
 import { formatBytes, formatDuration, stringToBytes } from '../utils/helpers';
 import { calculatePasswordStrength, getPasswordStrengthLabel } from '../lib/crypto';
@@ -30,6 +30,13 @@ const inputText = signal('');
 const fileName = signal<string | null>(null);
 const encryptEnabled = signal(false);
 const password = signal('');
+
+// Music steganography state
+const musicEnabled = signal(false);
+const musicFile = signal<{ name: string; samples: Float32Array; duration: number } | null>(null);
+const musicLoading = signal(false);
+const showMusicAdvanced = signal(false);
+const stegoTmr = signal(-6);
 
 export function Send() {
   const { t } = useI18n();
@@ -64,6 +71,8 @@ export function Send() {
     try {
       const result = await encodeString(inputText.value, {
         password: encryptEnabled.value ? password.value : undefined,
+        musicSamples: musicEnabled.value && musicFile.value ? musicFile.value.samples : undefined,
+        tmrDb: musicEnabled.value ? stegoTmr.value : undefined,
       });
       encodeResult.value = result;
       isResultStale.value = false;
@@ -119,6 +128,9 @@ export function Send() {
     fileName.value = null;
     encryptEnabled.value = false;
     password.value = '';
+    musicEnabled.value = false;
+    musicFile.value = null;
+    showMusicAdvanced.value = false;
     setShowPassword(false);
     sendState.value = 'idle';
     encodeResult.value = null;
@@ -254,6 +266,128 @@ export function Send() {
           </div>
         </div>
 
+        <div class="option-group">
+          <span class="option-label">{t.send.musicMode}</span>
+          <div class="segmented-toggle">
+            <button
+              class={`toggle-btn ${!musicEnabled.value ? 'active' : ''}`}
+              onClick={() => {
+                musicEnabled.value = false;
+                musicFile.value = null;
+                showMusicAdvanced.value = false;
+                if (encodeResult.value) isResultStale.value = true;
+              }}
+            >
+              {t.send.musicOff}
+            </button>
+            <button
+              class={`toggle-btn ${musicEnabled.value ? 'active' : ''}`}
+              onClick={() => {
+                musicEnabled.value = true;
+                if (encodeResult.value) isResultStale.value = true;
+              }}
+            >
+              {t.send.musicOn}
+            </button>
+          </div>
+        </div>
+
+        {musicEnabled.value && (
+          <div class="music-section">
+            {!musicFile.value && !musicLoading.value && (
+              <label class="music-upload">
+                <input
+                  type="file"
+                  accept="audio/*"
+                  class="music-file-input"
+                  onChange={async (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (!file) return;
+                    musicLoading.value = true;
+                    try {
+                      const { samples, sampleRate } = await parseAudioFile(file);
+                      musicFile.value = {
+                        name: file.name,
+                        samples,
+                        duration: samples.length / sampleRate,
+                      };
+                      if (encodeResult.value) isResultStale.value = true;
+                    } catch (err) {
+                      errorMessage.value = 'Failed to load audio file';
+                    } finally {
+                      musicLoading.value = false;
+                    }
+                  }}
+                />
+                <span class="music-upload-icon">&#9835;</span>
+                <span class="music-upload-text">{t.send.musicUpload}</span>
+                <span class="music-upload-hint">{t.send.musicUploadHint}</span>
+              </label>
+            )}
+
+            {musicLoading.value && (
+              <div class="music-loading">{t.send.musicLoading}</div>
+            )}
+
+            {musicFile.value && (
+              <div class="music-file-info">
+                <span class="music-file-icon">&#9835;</span>
+                <span class="music-file-name">{musicFile.value.name}</span>
+                <span class="music-file-duration">
+                  {formatDuration(musicFile.value.duration)}
+                </span>
+                <button
+                  class="music-file-clear"
+                  onClick={() => {
+                    musicFile.value = null;
+                    if (encodeResult.value) isResultStale.value = true;
+                  }}
+                  title={t.send.musicClear}
+                >
+                  &times;
+                </button>
+              </div>
+            )}
+
+            {musicFile.value && (
+              <div class="music-advanced-section">
+                <button
+                  class="music-advanced-toggle"
+                  onClick={() => { showMusicAdvanced.value = !showMusicAdvanced.value; }}
+                >
+                  {t.send.musicAdvanced} {showMusicAdvanced.value ? '▾' : '▸'}
+                </button>
+
+                {showMusicAdvanced.value && (
+                  <div class="stealth-controls">
+                    <span class="stealth-label">{t.send.stealthLevel}</span>
+                    <div class="stealth-options">
+                      <button
+                        class={`stealth-btn ${stegoTmr.value === -3 ? 'active' : ''}`}
+                        onClick={() => { stegoTmr.value = -3; if (encodeResult.value) isResultStale.value = true; }}
+                      >
+                        {t.send.stealthLow}
+                      </button>
+                      <button
+                        class={`stealth-btn ${stegoTmr.value === -6 ? 'active' : ''}`}
+                        onClick={() => { stegoTmr.value = -6; if (encodeResult.value) isResultStale.value = true; }}
+                      >
+                        {t.send.stealthMedium}
+                      </button>
+                      <button
+                        class={`stealth-btn ${stegoTmr.value === -10 ? 'active' : ''}`}
+                        onClick={() => { stegoTmr.value = -10; if (encodeResult.value) isResultStale.value = true; }}
+                      >
+                        {t.send.stealthHigh}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {encryptEnabled.value && (
           <div class="password-row">
             <div class="password-input-container">
@@ -344,6 +478,9 @@ export function Send() {
 
             {encodeResult.value.stats.encrypted && (
               <span class="encrypted-badge">{t.send.encrypted}</span>
+            )}
+            {musicEnabled.value && musicFile.value && (
+              <span class="music-badge">{t.send.musicBadge}</span>
             )}
           </div>
 

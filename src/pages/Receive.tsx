@@ -638,6 +638,9 @@ export function Receive() {
             {result.value.encrypted && (
               <span class="encrypted-badge">{t.receive.encrypted}</span>
             )}
+            {result.value.musicMode && (
+              <span class="music-badge">{t.receive.musicDetected}</span>
+            )}
           </div>
 
           <div class="result-text">

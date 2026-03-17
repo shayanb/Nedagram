@@ -33,8 +33,10 @@ export class PilotSyncDetector {
   private bufferLength: number;
   private readonly sampleRate: number;
   private readonly detectionThreshold: number;
+  private callCount: number = 0;
+  private static readonly CHECK_INTERVAL = 5; // Only check every N calls
 
-  constructor(sampleRate: number, threshold: number = 0.50) {
+  constructor(sampleRate: number, threshold: number = 0.45) {
     this.sampleRate = sampleRate;
     this.detectionThreshold = threshold;
     this.buffer = new Float32Array(sampleRate * 60);
@@ -56,21 +58,29 @@ export class PilotSyncDetector {
       return { ...EMPTY_RESULT };
     }
 
-    // Try both modes — save/restore current mode to avoid side effects
+    // Only run detection periodically to reduce CPU load
+    this.callCount++;
+    if (this.callCount % PilotSyncDetector.CHECK_INTERVAL !== 0) {
+      return { ...EMPTY_RESULT };
+    }
+
+    // Try both modes — always save/restore current mode to avoid side effects
+    // on the main decoder's symbol extraction
     const originalMode = getAudioMode();
+    let bestResult: PilotDetectionResult = { ...EMPTY_RESULT };
 
     for (const mode of ['phone', 'wideband'] as AudioMode[]) {
       setAudioMode(mode);
       const result = this.tryDetectMode(mode);
-      if (result.detected) {
-        // Leave the detected mode active
-        return result;
+      if (result.detected && result.confidence > bestResult.confidence) {
+        bestResult = result;
       }
     }
 
-    // Restore original mode if nothing found
+    // Always restore original mode — the caller (decoder) will set the
+    // detected mode when it processes the result
     setAudioMode(originalMode);
-    return { ...EMPTY_RESULT };
+    return bestResult;
   }
 
   private tryDetectMode(mode: AudioMode): PilotDetectionResult {

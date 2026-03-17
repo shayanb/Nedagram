@@ -51,6 +51,21 @@ export const en = {
       strong: 'Strong',
     },
     encrypted: 'Encrypted',
+    // Music steganography
+    musicMode: 'Music Steganography',
+    musicOff: 'Off',
+    musicOn: 'On',
+    musicUpload: 'Upload cover music',
+    musicUploadHint: 'MP3, WAV, M4A',
+    musicLoading: 'Loading audio...',
+    musicDuration: 'Duration',
+    musicClear: 'Remove',
+    musicAdvanced: 'Advanced',
+    stealthLevel: 'Stealth',
+    stealthLow: 'Low',
+    stealthMedium: 'Medium',
+    stealthHigh: 'High',
+    musicBadge: 'Music mode',
   },
   receive: {
     title: 'Receive',
@@ -91,6 +106,8 @@ export const en = {
     errorHint: 'Try playing the audio again from the beginning',
     scanToCopy: 'Scan to copy',
     clear: 'Clear',
+    // Music steganography
+    musicDetected: 'Embedded in music',
     // Encryption
     encrypted: 'Encrypted',
     passwordRequired: 'Password Required',
