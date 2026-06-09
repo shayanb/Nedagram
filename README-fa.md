@@ -21,6 +21,10 @@
 
 ## نحوه کار
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1d10615e-df53-4bda-b30f-497ac71e775c" controls width="600"></video>
+</p>
+
 ```
 ┌─────────────┐    امواج     ┌─────────────┐
 │   فرستنده   │     صوتی     │    گیرنده   │
